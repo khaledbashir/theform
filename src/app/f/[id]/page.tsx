@@ -117,6 +117,22 @@ export default function PublicForm() {
             )}
           </div>
 
+          {/* Progress */}
+          {form.fields.length > 3 && (
+            <div className="mb-6">
+              <div className="flex justify-between text-xs text-muted mb-1.5">
+                <span>Progress</span>
+                <span>{Object.values(values).filter((v) => (Array.isArray(v) ? v.length > 0 : v !== "")).length} / {form.fields.length}</span>
+              </div>
+              <div className="progress-bar">
+                <div
+                  className="progress-bar-fill"
+                  style={{ width: `${(Object.values(values).filter((v) => (Array.isArray(v) ? v.length > 0 : v !== "")).length / form.fields.length) * 100}%` }}
+                />
+              </div>
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-5">
             {form.fields.map((field) => (
               <div key={field.id} className="form-field">

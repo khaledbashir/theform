@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
+import { Toast, useToast } from "@/components/Toast";
 
 interface FormField {
   id: string;
@@ -29,6 +30,7 @@ export default function Dashboard() {
   const [fetching, setFetching] = useState(true);
   const [preview, setPreview] = useState<Form | null>(null);
   const [tab, setTab] = useState<"create" | "forms">("create");
+  const { toast, showToast, hideToast } = useToast();
 
   useEffect(() => {
     fetch("/api/forms")
@@ -53,8 +55,9 @@ export default function Dashboard() {
       setPreview(form);
       setForms((prev) => [{ ...form, _count: { responses: 0 } }, ...prev]);
       setPrompt("");
+      showToast("Form created successfully");
     } catch (e) {
-      alert("Failed to create form. Check your API key.");
+      showToast("Failed to create form");
     } finally {
       setLoading(false);
     }
@@ -65,12 +68,16 @@ export default function Dashboard() {
     await fetch(`/api/forms/${id}`, { method: "DELETE" });
     setForms((prev) => prev.filter((f) => f.id !== id));
     if (preview?.id === id) setPreview(null);
+    showToast("Form deleted");
   };
 
-  const copyLink = (id: string) => {
+  const copyLink = useCallback((id: string) => {
     const url = `${window.location.origin}/f/${id}`;
     navigator.clipboard.writeText(url);
-  };
+    showToast("Link copied to clipboard");
+  }, [showToast]);
+
+  const totalResponses = forms.reduce((sum, f) => sum + f._count.responses, 0);
 
   return (
     <div className="h-screen flex flex-col">
@@ -81,14 +88,18 @@ export default function Dashboard() {
             <span className="text-white font-bold text-sm">B</span>
           </div>
           <h1 className="text-lg font-semibold text-foreground">BasheerForms</h1>
+          {!fetching && forms.length > 0 && (
+            <div className="hidden sm:flex items-center gap-3 ml-4 pl-4 border-l border-border">
+              <span className="text-xs text-muted">{forms.length} form{forms.length !== 1 && "s"}</span>
+              <span className="text-xs text-muted">{totalResponses} response{totalResponses !== 1 && "s"}</span>
+            </div>
+          )}
         </div>
         <div className="flex gap-1 bg-surface rounded-lg p-1">
           <button
             onClick={() => setTab("create")}
             className={`px-4 py-1.5 text-sm rounded-md transition-colors ${
-              tab === "create"
-                ? "bg-accent text-white"
-                : "text-muted hover:text-foreground"
+              tab === "create" ? "bg-accent text-white" : "text-muted hover:text-foreground"
             }`}
           >
             Create
@@ -96,18 +107,15 @@ export default function Dashboard() {
           <button
             onClick={() => setTab("forms")}
             className={`px-4 py-1.5 text-sm rounded-md transition-colors ${
-              tab === "forms"
-                ? "bg-accent text-white"
-                : "text-muted hover:text-foreground"
+              tab === "forms" ? "bg-accent text-white" : "text-muted hover:text-foreground"
             }`}
           >
-            My Forms{forms.length > 0 && ` (${forms.length})`}
+            My Forms
           </button>
         </div>
       </header>
 
       {tab === "create" ? (
-        /* Split Screen: Prompt | Preview */
         <div className="flex-1 flex overflow-hidden">
           {/* Left: Prompt */}
           <div className="w-1/2 border-r border-border flex flex-col">
@@ -152,17 +160,22 @@ export default function Dashboard() {
             {loading ? (
               <div className="flex-1 flex items-center justify-center">
                 <div className="text-center">
-                  <svg className="animate-spin h-8 w-8 text-accent mx-auto mb-3" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  <p className="text-muted text-sm">AI is building your form...</p>
+                  <div className="relative w-12 h-12 mx-auto mb-4">
+                    <div className="absolute inset-0 border-2 border-accent/20 rounded-full" />
+                    <div className="absolute inset-0 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                  </div>
+                  <p className="text-foreground text-sm font-medium mb-1">Building your form...</p>
+                  <p className="text-muted text-xs">This usually takes a few seconds</p>
                 </div>
               </div>
             ) : preview ? (
               <div className="p-6">
                 <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-sm font-medium text-muted">Preview</h2>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-success" />
+                    <h2 className="text-sm font-medium text-foreground">Form Ready</h2>
+                    <span className="text-xs text-muted">{preview.fields?.length || 0} fields</span>
+                  </div>
                   <div className="flex gap-2">
                     <button
                       onClick={() => copyLink(preview.id)}
@@ -173,9 +186,9 @@ export default function Dashboard() {
                     <Link
                       href={`/f/${preview.id}`}
                       target="_blank"
-                      className="text-xs px-3 py-1.5 rounded-lg bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
+                      className="text-xs px-3 py-1.5 rounded-lg bg-accent text-white hover:bg-accent-hover transition-colors"
                     >
-                      Open Full Page
+                      Open Form
                     </Link>
                   </div>
                 </div>
@@ -235,7 +248,8 @@ export default function Dashboard() {
                       <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
                     </svg>
                   </div>
-                  <p className="text-muted text-sm">Describe your form on the left.<br />The preview will appear here.</p>
+                  <p className="text-foreground text-sm font-medium mb-1">No form yet</p>
+                  <p className="text-muted text-xs">Describe what you need on the left and hit Generate</p>
                 </div>
               </div>
             )}
@@ -246,15 +260,23 @@ export default function Dashboard() {
         <div className="flex-1 overflow-y-auto p-6">
           <div className="max-w-4xl mx-auto">
             {fetching ? (
-              <div className="text-center text-muted py-12">Loading...</div>
+              <div className="text-center text-muted py-12">
+                <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin mx-auto" />
+              </div>
             ) : forms.length === 0 ? (
               <div className="text-center py-20">
-                <p className="text-muted mb-4">No forms yet.</p>
+                <div className="w-20 h-20 rounded-2xl bg-surface border border-border flex items-center justify-center mx-auto mb-6">
+                  <svg className="w-10 h-10 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                  </svg>
+                </div>
+                <p className="text-foreground font-medium mb-1">No forms yet</p>
+                <p className="text-muted text-sm mb-6">Create your first form with AI</p>
                 <button
                   onClick={() => setTab("create")}
-                  className="text-accent hover:text-accent-hover text-sm"
+                  className="bg-accent text-white px-5 py-2 rounded-lg text-sm hover:bg-accent-hover transition-colors"
                 >
-                  Create your first form
+                  Create Form
                 </button>
               </div>
             ) : (
@@ -262,44 +284,50 @@ export default function Dashboard() {
                 {forms.map((form) => (
                   <div
                     key={form.id}
-                    className="bg-surface border border-border rounded-xl p-4 flex items-center justify-between hover:border-accent/30 transition-colors"
+                    className="bg-surface border border-border rounded-xl p-4 hover:border-accent/30 transition-colors group"
                   >
-                    <div className="min-w-0 flex-1">
-                      <h3 className="font-medium text-foreground truncate">{form.title}</h3>
-                      <p className="text-sm text-muted truncate mt-0.5">{form.description}</p>
-                      <div className="flex items-center gap-4 mt-2 text-xs text-muted">
-                        <span className={form._count.responses > 0 ? "text-success" : ""}>
-                          {form._count.responses} response{form._count.responses !== 1 && "s"}
+                    <div className="flex items-start justify-between">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-medium text-foreground truncate">{form.title}</h3>
+                          {form._count.responses > 0 && (
+                            <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full bg-success/10 text-success font-medium">
+                              {form._count.responses}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-muted truncate mt-0.5">{form.description}</p>
+                        <span className="text-xs text-muted mt-1.5 block">
+                          {formatDistanceToNow(new Date(form.createdAt), { addSuffix: true })}
                         </span>
-                        <span>{formatDistanceToNow(new Date(form.createdAt), { addSuffix: true })}</span>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-2 ml-4 shrink-0">
-                      <button
-                        onClick={() => copyLink(form.id)}
-                        className="text-xs px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-muted hover:text-foreground hover:border-accent/30 transition-colors"
-                      >
-                        Copy Link
-                      </button>
-                      <Link
-                        href={`/f/${form.id}`}
-                        target="_blank"
-                        className="text-xs px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-muted hover:text-foreground hover:border-accent/30 transition-colors"
-                      >
-                        Preview
-                      </Link>
-                      <Link
-                        href={`/forms/${form.id}`}
-                        className="text-xs px-3 py-1.5 rounded-lg bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
-                      >
-                        Responses
-                      </Link>
-                      <button
-                        onClick={() => deleteForm(form.id)}
-                        className="text-xs px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-danger/70 hover:text-danger hover:border-danger/30 transition-colors"
-                      >
-                        Delete
-                      </button>
+                      <div className="flex items-center gap-2 ml-4 shrink-0 opacity-60 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={() => copyLink(form.id)}
+                          className="text-xs px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-muted hover:text-foreground hover:border-accent/30 transition-colors"
+                        >
+                          Copy Link
+                        </button>
+                        <Link
+                          href={`/f/${form.id}`}
+                          target="_blank"
+                          className="text-xs px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-muted hover:text-foreground hover:border-accent/30 transition-colors"
+                        >
+                          Preview
+                        </Link>
+                        <Link
+                          href={`/forms/${form.id}`}
+                          className="text-xs px-3 py-1.5 rounded-lg bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
+                        >
+                          Responses
+                        </Link>
+                        <button
+                          onClick={() => deleteForm(form.id)}
+                          className="text-xs px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-danger/70 hover:text-danger hover:border-danger/30 transition-colors"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -308,6 +336,8 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
+      <Toast message={toast.message} show={toast.show} onHide={hideToast} />
     </div>
   );
 }

@@ -104,6 +104,26 @@ export default function FormResponses() {
       </div>
 
       <div className="max-w-6xl mx-auto p-6">
+        {/* Stats */}
+        {form.responses.length > 0 && (
+          <div className="grid grid-cols-3 gap-3 mb-6">
+            <div className="bg-surface border border-border rounded-xl p-4">
+              <p className="text-xs text-muted mb-1">Total Responses</p>
+              <p className="text-2xl font-semibold text-foreground">{form.responses.length}</p>
+            </div>
+            <div className="bg-surface border border-border rounded-xl p-4">
+              <p className="text-xs text-muted mb-1">Fields</p>
+              <p className="text-2xl font-semibold text-foreground">{form.fields.length}</p>
+            </div>
+            <div className="bg-surface border border-border rounded-xl p-4">
+              <p className="text-xs text-muted mb-1">Latest</p>
+              <p className="text-lg font-semibold text-foreground">
+                {formatDistanceToNow(new Date(form.responses[0].createdAt), { addSuffix: true })}
+              </p>
+            </div>
+          </div>
+        )}
+
         {form.responses.length === 0 ? (
           <div className="bg-surface border border-border rounded-xl p-12 text-center">
             <p className="text-muted mb-2">No responses yet.</p>

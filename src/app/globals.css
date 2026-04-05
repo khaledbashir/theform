@@ -126,6 +126,33 @@ body {
   box-shadow: inset 0 0 0 3px var(--surface);
 }
 
+/* Toast animation */
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+.animate-toast { animation: toast-in 0.2s ease-out; }
+
+/* Select dark mode fix */
+.form-field select option {
+  background: var(--surface-2);
+  color: var(--foreground);
+}
+
+/* Progress bar */
+.progress-bar {
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.progress-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
 .checkbox-option input[type="checkbox"]:checked {
   border-color: var(--accent);
   background: var(--accent);
