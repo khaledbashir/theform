@@ -19,7 +19,7 @@ FROM base AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
-RUN npm install -g prisma@7.6.0 dotenv
+RUN npm install -g prisma@7.6.0
 
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
