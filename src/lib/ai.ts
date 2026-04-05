@@ -1,9 +1,16 @@
 import OpenAI from "openai";
 
-const client = new OpenAI({
-  baseURL: process.env.AI_BASE_URL || "https://api.minimax.io/v1",
-  apiKey: process.env.AI_API_KEY,
-});
+let _client: OpenAI | null = null;
+
+function getClient() {
+  if (!_client) {
+    _client = new OpenAI({
+      baseURL: process.env.AI_BASE_URL || "https://api.minimax.io/v1",
+      apiKey: process.env.AI_API_KEY,
+    });
+  }
+  return _client;
+}
 
 export interface FormField {
   id: string;
@@ -21,7 +28,7 @@ export interface GeneratedForm {
 }
 
 export async function generateForm(prompt: string): Promise<GeneratedForm> {
-  const completion = await client.chat.completions.create({
+  const completion = await getClient().chat.completions.create({
     model: process.env.AI_MODEL || "MiniMax-M2.7",
     max_tokens: 2048,
     messages: [
