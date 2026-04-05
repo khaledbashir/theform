@@ -18,7 +18,7 @@ export interface FormField {
   label: string;
   placeholder?: string;
   required: boolean;
-  options?: string[]; // for select, radio, checkbox
+  options?: string[];
 }
 
 export interface GeneratedForm {
@@ -30,29 +30,39 @@ export interface GeneratedForm {
 export async function generateForm(prompt: string): Promise<GeneratedForm> {
   const completion = await getClient().chat.completions.create({
     model: process.env.AI_MODEL || "MiniMax-M2.7",
-    max_tokens: 2048,
+    max_tokens: 4096,
     messages: [
       {
         role: "system",
-        content: `You are a form builder AI. Based on the user's description, generate a form as JSON.
+        content: `You are a professional form builder. Generate a complete, well-structured form based on the user's description.
 
-Return ONLY valid JSON with this structure:
+IMPORTANT RULES:
+- Generate between 5-15 fields depending on complexity
+- Always include basic contact fields (name, email) unless explicitly not needed
+- Use the most appropriate field type for each piece of data
+- Use "select" for lists of 3-7 options, "radio" for 2-4 options
+- Use "checkbox" when multiple selections are allowed
+- Use "textarea" for open-ended responses
+- Use specific types: "email" for emails, "phone" for phones, "date" for dates, "number" for numbers, "url" for websites
+- Make fields required when they're essential info, optional for nice-to-haves
+- Write clear, professional labels and helpful placeholders
+- Generate unique lowercase snake_case IDs for each field
+
+Return ONLY valid JSON (no markdown, no code fences):
 {
-  "title": "Form title",
-  "description": "Brief description of the form",
+  "title": "Professional form title",
+  "description": "One line explaining the form's purpose",
   "fields": [
     {
-      "id": "unique_field_id",
+      "id": "field_id",
       "type": "text|email|phone|textarea|select|radio|checkbox|number|date|url",
-      "label": "Field label",
-      "placeholder": "Placeholder text",
-      "required": true/false,
-      "options": ["option1", "option2"] // only for select, radio, checkbox types
+      "label": "Field Label",
+      "placeholder": "Helpful hint...",
+      "required": true,
+      "options": ["Option 1", "Option 2"]
     }
   ]
-}
-
-Make the form professional and comprehensive but not overwhelming. Use appropriate field types.`,
+}`,
       },
       {
         role: "user",

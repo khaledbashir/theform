@@ -5,14 +5,14 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "FormAI - AI Form Builder",
-  description: "Create forms with AI, share with clients, track responses",
+  title: "BasheerForms - AI Form Builder",
+  description: "Describe what you need. AI builds the form. Share it. See responses.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body className={`${inter.className} bg-gray-50 min-h-screen`}>{children}</body>
+    <html lang="en" className="dark">
+      <body className={`${inter.className} min-h-screen`}>{children}</body>
     </html>
   );
 }

@@ -76,52 +76,57 @@ export default function PublicForm() {
 
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p className="text-gray-500">{error}</p>
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <p className="text-muted">{error}</p>
       </div>
     );
   }
 
   if (!form) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p className="text-gray-400">Loading...</p>
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
 
   if (submitted) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="text-center">
-          <div className="text-5xl mb-4">&#10003;</div>
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">Thank you!</h2>
-          <p className="text-gray-500">Your response has been submitted.</p>
+          <div className="w-16 h-16 rounded-full bg-success/10 flex items-center justify-center mx-auto mb-4">
+            <svg className="w-8 h-8 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <h2 className="text-2xl font-semibold text-foreground mb-2">Thank you!</h2>
+          <p className="text-muted">Your response has been submitted successfully.</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8 px-4">
-      <div className="max-w-2xl mx-auto">
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">{form.title}</h1>
-          {form.description && (
-            <p className="text-gray-500 mb-6">{form.description}</p>
-          )}
+    <div className="min-h-screen bg-background py-10 px-4">
+      <div className="max-w-xl mx-auto">
+        <div className="bg-surface border border-border rounded-2xl p-8">
+          <div className="mb-6">
+            <h1 className="text-2xl font-semibold text-foreground">{form.title}</h1>
+            {form.description && (
+              <p className="text-sm text-muted mt-1">{form.description}</p>
+            )}
+          </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
             {form.fields.map((field) => (
-              <div key={field.id}>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+              <div key={field.id} className="form-field">
+                <label className="block text-sm font-medium text-foreground mb-1.5">
                   {field.label}
-                  {field.required && <span className="text-red-500 ml-1">*</span>}
+                  {field.required && <span className="text-danger ml-1">*</span>}
                 </label>
 
                 {field.type === "textarea" ? (
                   <textarea
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder={field.placeholder}
                     required={field.required}
                     rows={4}
@@ -130,22 +135,19 @@ export default function PublicForm() {
                   />
                 ) : field.type === "select" ? (
                   <select
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     required={field.required}
                     value={values[field.id] || ""}
                     onChange={(e) => setValue(field.id, e.target.value)}
                   >
                     <option value="">Select...</option>
                     {field.options?.map((opt) => (
-                      <option key={opt} value={opt}>
-                        {opt}
-                      </option>
+                      <option key={opt} value={opt}>{opt}</option>
                     ))}
                   </select>
                 ) : field.type === "radio" ? (
-                  <div className="space-y-2">
+                  <div className="space-y-2 pt-1">
                     {field.options?.map((opt) => (
-                      <label key={opt} className="flex items-center gap-2 text-sm text-gray-700">
+                      <label key={opt} className="flex items-center gap-2.5 text-sm text-foreground cursor-pointer">
                         <input
                           type="radio"
                           name={field.id}
@@ -153,21 +155,21 @@ export default function PublicForm() {
                           required={field.required}
                           checked={values[field.id] === opt}
                           onChange={() => setValue(field.id, opt)}
-                          className="text-blue-600"
+                          className="accent-accent"
                         />
                         {opt}
                       </label>
                     ))}
                   </div>
                 ) : field.type === "checkbox" ? (
-                  <div className="space-y-2">
+                  <div className="space-y-2 pt-1">
                     {field.options?.map((opt) => (
-                      <label key={opt} className="flex items-center gap-2 text-sm text-gray-700">
+                      <label key={opt} className="flex items-center gap-2.5 text-sm text-foreground cursor-pointer">
                         <input
                           type="checkbox"
                           checked={(values[field.id] || []).includes(opt)}
                           onChange={() => toggleCheckbox(field.id, opt)}
-                          className="text-blue-600"
+                          className="accent-accent"
                         />
                         {opt}
                       </label>
@@ -176,7 +178,6 @@ export default function PublicForm() {
                 ) : (
                   <input
                     type={field.type}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder={field.placeholder}
                     required={field.required}
                     value={values[field.id] || ""}
@@ -189,13 +190,13 @@ export default function PublicForm() {
             <button
               type="submit"
               disabled={submitting}
-              className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              className="w-full bg-accent text-white py-3 rounded-xl font-medium hover:bg-accent-hover disabled:opacity-50 transition-colors text-sm mt-2"
             >
               {submitting ? "Submitting..." : "Submit"}
             </button>
           </form>
         </div>
-        <p className="text-center text-xs text-gray-400 mt-4">Powered by FormAI</p>
+        <p className="text-center text-xs text-muted/50 mt-4">Powered by BasheerForms</p>
       </div>
     </div>
   );
