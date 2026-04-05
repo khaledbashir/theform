@@ -199,19 +199,19 @@ export default function Dashboard() {
                             {field.options?.map((o) => <option key={o}>{o}</option>)}
                           </select>
                         ) : field.type === "radio" ? (
-                          <div className="space-y-1.5">
+                          <div className="space-y-2">
                             {field.options?.map((o) => (
-                              <label key={o} className="flex items-center gap-2 text-sm text-foreground">
-                                <input type="radio" name={field.id} disabled className="accent-accent" />
+                              <label key={o} className="radio-option">
+                                <input type="radio" name={field.id} disabled />
                                 {o}
                               </label>
                             ))}
                           </div>
                         ) : field.type === "checkbox" ? (
-                          <div className="space-y-1.5">
+                          <div className="space-y-2">
                             {field.options?.map((o) => (
-                              <label key={o} className="flex items-center gap-2 text-sm text-foreground">
-                                <input type="checkbox" disabled className="accent-accent" />
+                              <label key={o} className="checkbox-option">
+                                <input type="checkbox" disabled />
                                 {o}
                               </label>
                             ))}

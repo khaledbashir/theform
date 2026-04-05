@@ -145,9 +145,9 @@ export default function PublicForm() {
                     ))}
                   </select>
                 ) : field.type === "radio" ? (
-                  <div className="space-y-2 pt-1">
+                  <div className="space-y-2">
                     {field.options?.map((opt) => (
-                      <label key={opt} className="flex items-center gap-2.5 text-sm text-foreground cursor-pointer">
+                      <label key={opt} className="radio-option">
                         <input
                           type="radio"
                           name={field.id}
@@ -155,21 +155,19 @@ export default function PublicForm() {
                           required={field.required}
                           checked={values[field.id] === opt}
                           onChange={() => setValue(field.id, opt)}
-                          className="accent-accent"
                         />
                         {opt}
                       </label>
                     ))}
                   </div>
                 ) : field.type === "checkbox" ? (
-                  <div className="space-y-2 pt-1">
+                  <div className="space-y-2">
                     {field.options?.map((opt) => (
-                      <label key={opt} className="flex items-center gap-2.5 text-sm text-foreground cursor-pointer">
+                      <label key={opt} className="checkbox-option">
                         <input
                           type="checkbox"
                           checked={(values[field.id] || []).includes(opt)}
                           onChange={() => toggleCheckbox(field.id, opt)}
-                          className="accent-accent"
                         />
                         {opt}
                       </label>

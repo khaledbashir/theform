@@ -66,3 +66,71 @@ body {
 .form-field textarea::placeholder {
   color: var(--muted);
 }
+
+/* Exclude radio/checkbox from full-width block styling */
+.form-field input[type="radio"],
+.form-field input[type="checkbox"] {
+  width: auto;
+  padding: 0;
+  border: none;
+  background: none;
+  box-shadow: none;
+}
+
+/* Custom radio buttons */
+.radio-option,
+.checkbox-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  font-size: 14px;
+  color: var(--foreground);
+}
+
+.radio-option:hover,
+.checkbox-option:hover {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.radio-option input[type="radio"],
+.checkbox-option input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.radio-option input[type="radio"] {
+  border-radius: 50%;
+}
+
+.checkbox-option input[type="checkbox"] {
+  border-radius: 4px;
+}
+
+.radio-option input[type="radio"]:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: inset 0 0 0 3px var(--surface);
+}
+
+.checkbox-option input[type="checkbox"]:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 16 16' fill='white' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M12.207 4.793a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0l-2-2a1 1 0 011.414-1.414L6.5 9.086l4.293-4.293a1 1 0 011.414 0z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 12px;
+}
