@@ -1,0 +1,31 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Form {
+  id          String     @id @default(cuid())
+  title       String
+  description String?
+  fields      Json
+  published   Boolean    @default(true)
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+  responses   Response[]
+
+  @@map("forms")
+}
+
+model Response {
+  id        String   @id @default(cuid())
+  formId    String   @map("form_id")
+  data      Json
+  createdAt DateTime @default(now()) @map("created_at")
+  form      Form     @relation(fields: [formId], references: [id], onDelete: Cascade)
+
+  @@map("responses")
+}
