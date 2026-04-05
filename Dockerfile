@@ -19,19 +19,16 @@ FROM base AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
+RUN npm install -g prisma@7.6.0 dotenv
+
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
-COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=builder /app/node_modules/dotenv ./node_modules/dotenv
-COPY --from=builder /app/node_modules/.bin/prisma ./node_modules/.bin/prisma
 
 EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
-ENV PATH="/app/node_modules/.bin:$PATH"
 
 CMD ["sh", "-c", "prisma migrate deploy && node server.js"]
