@@ -29,15 +29,59 @@ interface ChatMessage {
   form?: Form;
 }
 
+// ANC-specific presets — these auto-configure a Twenty CRM target so every
+// submission creates a record in the matching custom object. Field IDs in the
+// prompt use snake_case matching the Twenty field names (auto-mapped via
+// snakeToCamel in lib/twenty.ts).
 const PRESETS = [
-  { icon: "👤", label: "Client Intake", prompt: "A client intake form — collect name, email, phone, company, what service they need, budget range, timeline, and how they found us" },
-  { icon: "📋", label: "Feedback Survey", prompt: "A customer feedback survey — overall satisfaction rating, what they liked most, what could be improved, would they recommend us, any additional comments" },
-  { icon: "📅", label: "Event Registration", prompt: "An event registration form — attendee name, email, phone, organization, dietary restrictions, session preferences, accessibility needs, how they heard about the event" },
-  { icon: "💼", label: "Job Application", prompt: "A job application form — full name, email, phone, LinkedIn URL, years of experience, desired role, salary expectations, earliest start date, cover letter" },
-  { icon: "🏠", label: "Property Inquiry", prompt: "A real estate property inquiry — name, email, phone, property type interested in, budget range, preferred locations, number of bedrooms, move-in timeline, pre-approved for mortgage" },
-  { icon: "🎨", label: "Project Brief", prompt: "A creative project brief form — client name, company, email, project type, project description, target audience, preferred style/tone, examples they like, deadline, budget" },
-  { icon: "🏥", label: "Patient Intake", prompt: "A patient intake form — full name, date of birth, email, phone, emergency contact, insurance provider, current medications, allergies, reason for visit, medical history notes" },
-  { icon: "📦", label: "Order Request", prompt: "A product order request form — customer name, email, shipping address, product selection, quantity, preferred delivery date, special instructions, payment method" },
+  {
+    icon: "🎨",
+    label: "Design Request",
+    crmTarget: "designRequests",
+    prompt: "An ANC Sports design request intake form. Use these EXACT field IDs (snake_case) in this order: requester_name, requester_email, client_name, venue_name, client_tri_code, deliverable_type (select: Ribbon graphic/Center-hung/Scoreboard/LED wall/Tunnel/Courtside/Dasherboard/Animation/Static graphic/Other), sport (select: NFL/NBA/MLB/NHL/MLS/WNBA/NCAA/Other), due_date (date), rush_request (checkbox), description (textarea, required), reference_notes (text). Title: 'ANC Design Request'. Description: 'Submit a design job to the ANC creative team'.",
+  },
+  {
+    icon: "🖨️",
+    label: "Print Request (Britten)",
+    crmTarget: "printRequests",
+    prompt: "An ANC Sports Britten print request form. Use these EXACT field IDs (snake_case): submitted_by, requester_email, client_name, sf_number, due_date (date), reprint (checkbox), rush_request (checkbox), baselines (number), home_plate (number), small_home_plate (number), other_qty (number), shipping_address (text), notes (textarea). Title: 'ANC Print Request'. Description: 'Britten-fabricated signage — baselines, home plate, courtside'.",
+  },
+  {
+    icon: "📦",
+    label: "Parts Order",
+    crmTarget: "partsOrders",
+    prompt: "An ANC internal parts ordering form. Use these EXACT field IDs: requestor_name, requestor_email, venue_name (text, required), parts_needed (textarea, required — list brand/model/spec), quantity (number), urgency (select: Normal/Rush/Emergency), shipping_address (text, required), notes (textarea). Title: 'ANC Parts Order'. Description: 'Internal parts ordering — cables, modules, replacements'.",
+  },
+  {
+    icon: "📺",
+    label: "Content Schedule",
+    crmTarget: "contentSchedules",
+    prompt: "An ANC operator content scheduling form. Use these EXACT field IDs: name (text, required — content title), scheduleClient (text — client name), operator (text), start_date (date, required), end_date (date, required), ftp_location (text), proof_link (url), project_location (text), client_tri_code (text), notes (textarea). Title: 'ANC Content Schedule'. Description: 'Schedule operator content to launch — places scheduling workflow'.",
+  },
+  {
+    icon: "🖼️",
+    label: "CG Design Request",
+    crmTarget: "cgDesignRequests",
+    prompt: "An ANC CG design request form for team/venue graphics. Use these EXACT field IDs: request_title (text, required), requester_email, cg_client (text — team name), sport (select: NFL/NBA/MLB/NHL/MLS/WNBA/NCAA), team_name (text), due_date (date), client_tri_code (text), description (textarea, required). Title: 'ANC CG Design Request'. Description: 'Computer graphics for team/venue content'.",
+  },
+  {
+    icon: "📋",
+    label: "Walkthrough Log",
+    crmTarget: "walkthroughLogs",
+    prompt: "An ANC technician walkthrough log for venue inspection. Use these EXACT field IDs: name (text, required — 'Venue walkthrough'), venue_name (text, required), walkthrough_date (date, required), result (select: Good/Partial/Problem Detected), tech_name (text, required), items_checked (textarea — list what was inspected), issues_found (textarea — any problems), photo_url (url). Title: 'Walkthrough Log'. Description: 'Log a venue walkthrough with any issues found'.",
+  },
+  {
+    icon: "🎫",
+    label: "Service Ticket",
+    crmTarget: "serviceTickets",
+    prompt: "An ANC service ticket intake for hardware or software issues. Use these EXACT field IDs: name (text, required — ticket subject), reporter_name (text, required), reporter_email (email, required), venue_name (text, required), category (select: Hardware/Software/General/Network/Display), priority (select: Low/Medium/High), description (textarea, required), photo_url (url). Title: 'Service Ticket'. Description: 'Report an issue at any ANC venue'.",
+  },
+  {
+    icon: "🏟️",
+    label: "Venue Intake",
+    crmTarget: "",
+    prompt: "A new venue onboarding form for ANC Sports. Use these EXACT field IDs: venue_name (text, required), market (text), contact_name (text), contact_email (email, required), contact_phone (phone), venue_type (select: Stadium/Arena/Convention Center/University/Transit/Corporate/Retail), capacity (number), notes (textarea). Title: 'New Venue Intake'. Description: 'Add a new venue to the ANC network'.",
+  },
 ];
 
 export default function Dashboard() {
@@ -65,7 +109,7 @@ export default function Dashboard() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  const createForm = async (overridePrompt?: string) => {
+  const createForm = async (overridePrompt?: string, crmTarget?: string) => {
     const text = overridePrompt || prompt.trim();
     if (!text) return;
 
@@ -78,20 +122,23 @@ export default function Dashboard() {
       const res = await fetch("/api/forms", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: text }),
+        body: JSON.stringify({ prompt: text, crmTarget: crmTarget || undefined }),
       });
       const form = await res.json();
       setPreview(form);
+      const crmNote = form.crmTarget
+        ? ` Connected to CRM → ${form.crmTarget}`
+        : "";
       setMessages((prev) => [
         ...prev,
         {
           role: "ai",
-          content: `Created "${form.title}" with ${form.fields?.length || 0} fields.`,
+          content: `Created "${form.title}" with ${form.fields?.length || 0} fields.${crmNote}`,
           form,
         },
       ]);
       setForms((prev) => [{ ...form, _count: { responses: 0 } }, ...prev]);
-      showToast("Form created");
+      showToast(crmTarget ? "Form created + connected to CRM" : "Form created");
     } catch (e) {
       setMessages((prev) => [
         ...prev,
@@ -181,12 +228,19 @@ export default function Dashboard() {
                       {PRESETS.map((p) => (
                         <button
                           key={p.label}
-                          onClick={() => createForm(p.prompt)}
+                          onClick={() => createForm(p.prompt, p.crmTarget)}
                           disabled={loading}
                           className="text-left p-3 rounded-xl bg-surface border border-border hover:border-accent/40 hover:bg-accent/5 transition-all group disabled:opacity-50"
                         >
-                          <span className="text-lg mb-1 block">{p.icon}</span>
-                          <span className="text-sm font-medium text-foreground group-hover:text-accent transition-colors">
+                          <div className="flex items-start justify-between mb-1">
+                            <span className="text-lg block">{p.icon}</span>
+                            {p.crmTarget && (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-accent/10 text-accent font-medium">
+                                → CRM
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-sm font-medium text-foreground group-hover:text-accent transition-colors block">
                             {p.label}
                           </span>
                         </button>

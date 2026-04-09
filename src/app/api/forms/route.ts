@@ -11,7 +11,9 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const { prompt } = await req.json();
+  const body = await req.json();
+  const { prompt, crmTarget, crmFieldMap } = body;
+
   const generated = await generateForm(prompt);
 
   const form = await prisma.form.create({
@@ -19,7 +21,10 @@ export async function POST(req: Request) {
       title: generated.title,
       description: generated.description,
       fields: generated.fields as any,
-    },
+      // Optional: presets pass a Twenty CRM target so submissions auto-route
+      ...(crmTarget ? { crmTarget } : {}),
+      ...(crmFieldMap ? { crmFieldMap } : {}),
+    } as any,
   });
 
   return NextResponse.json(form);

@@ -35,6 +35,10 @@ async function main() {
         FOREIGN KEY (\"form_id\") REFERENCES \"forms\"(\"id\") ON DELETE CASCADE ON UPDATE CASCADE;
     EXCEPTION WHEN duplicate_object THEN NULL;
     END \\\$\\\$;
+
+    -- Twenty CRM integration columns (idempotent)
+    ALTER TABLE \"forms\" ADD COLUMN IF NOT EXISTS \"crm_target\" TEXT;
+    ALTER TABLE \"forms\" ADD COLUMN IF NOT EXISTS \"crm_field_map\" JSONB;
   \`);
 
   console.log('Database tables ready.');

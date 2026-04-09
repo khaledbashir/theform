@@ -8,14 +8,17 @@ datasource db {
 }
 
 model Form {
-  id          String     @id @default(cuid())
-  title       String
-  description String?
-  fields      Json
-  published   Boolean    @default(true)
-  createdAt   DateTime   @default(now()) @map("created_at")
-  updatedAt   DateTime   @updatedAt @map("updated_at")
-  responses   Response[]
+  id           String     @id @default(cuid())
+  title        String
+  description  String?
+  fields       Json
+  published    Boolean    @default(true)
+  // Twenty CRM integration — when set, every response also creates a CRM record
+  crmTarget    String?    @map("crm_target")    // e.g. "printRequests", "designRequests"
+  crmFieldMap  Json?      @map("crm_field_map") // { formFieldId: "twentyFieldName" }
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+  responses    Response[]
 
   @@map("forms")
 }

@@ -23,18 +23,75 @@ interface FormData {
   description: string;
   fields: FormField[];
   responses: Response[];
+  crmTarget?: string | null;
+  crmFieldMap?: Record<string, string> | null;
 }
+
+const CRM_TARGETS = [
+  { value: "", label: "— No CRM integration —" },
+  { value: "printRequests", label: "Print Request (Britten)" },
+  { value: "designRequests", label: "Design Request" },
+  { value: "cgDesignRequests", label: "CG Design Request" },
+  { value: "contentSchedules", label: "Content Schedule" },
+  { value: "partsOrders", label: "Parts Order" },
+  { value: "walkthroughLogs", label: "Walkthrough Log" },
+  { value: "serviceTickets", label: "Service Ticket" },
+  { value: "maintenanceLogs", label: "Maintenance Log" },
+  { value: "rmaTrackers", label: "RMA Tracker" },
+  { value: "checklistItems", label: "Checklist Item (30/60/90)" },
+];
 
 export default function FormResponses() {
   const { id } = useParams();
   const [form, setForm] = useState<FormData | null>(null);
   const [view, setView] = useState<"table" | "cards">("table");
+  const [editingCrm, setEditingCrm] = useState(false);
+  const [savingCrm, setSavingCrm] = useState(false);
+  const [crmTargetDraft, setCrmTargetDraft] = useState("");
+  const [crmFieldMapDraft, setCrmFieldMapDraft] = useState("");
 
   useEffect(() => {
     fetch(`/api/forms/${id}`)
       .then((r) => r.json())
-      .then(setForm);
+      .then((f) => {
+        setForm(f);
+        setCrmTargetDraft(f.crmTarget || "");
+        setCrmFieldMapDraft(
+          f.crmFieldMap ? JSON.stringify(f.crmFieldMap, null, 2) : ""
+        );
+      });
   }, [id]);
+
+  const saveCrmConfig = async () => {
+    setSavingCrm(true);
+    try {
+      let fieldMap: Record<string, string> | null = null;
+      if (crmFieldMapDraft.trim()) {
+        try {
+          fieldMap = JSON.parse(crmFieldMapDraft);
+        } catch {
+          alert("Invalid JSON in field mapping");
+          setSavingCrm(false);
+          return;
+        }
+      }
+      const res = await fetch(`/api/forms/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          crmTarget: crmTargetDraft,
+          crmFieldMap: fieldMap,
+        }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setForm((f) => (f ? { ...f, crmTarget: updated.crmTarget, crmFieldMap: updated.crmFieldMap } : f));
+        setEditingCrm(false);
+      }
+    } finally {
+      setSavingCrm(false);
+    }
+  };
 
   if (!form) {
     return (
@@ -104,6 +161,103 @@ export default function FormResponses() {
       </div>
 
       <div className="max-w-6xl mx-auto p-6">
+        {/* CRM Integration Panel */}
+        <div className="bg-surface border border-border rounded-xl p-5 mb-6">
+          <div className="flex items-start justify-between">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-base">🔗</span>
+                <h3 className="text-sm font-semibold text-foreground">CRM Integration</h3>
+                {form.crmTarget ? (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-500/10 text-green-400 font-medium">
+                    CONNECTED
+                  </span>
+                ) : (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted/10 text-muted font-medium">
+                    NOT CONNECTED
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-muted">
+                {form.crmTarget
+                  ? `Every submission creates a new record in Twenty CRM → ${form.crmTarget}`
+                  : "Submissions are stored locally only. Connect a Twenty CRM target to auto-create records."}
+              </p>
+            </div>
+            {!editingCrm && (
+              <button
+                onClick={() => setEditingCrm(true)}
+                className="text-xs px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-muted hover:text-foreground transition-colors"
+              >
+                {form.crmTarget ? "Edit" : "Connect"}
+              </button>
+            )}
+          </div>
+
+          {editingCrm && (
+            <div className="mt-4 space-y-3 border-t border-border pt-4">
+              <div>
+                <label className="block text-xs font-medium text-muted mb-1.5">
+                  Twenty CRM target object
+                </label>
+                <select
+                  value={crmTargetDraft}
+                  onChange={(e) => setCrmTargetDraft(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-background border border-border text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
+                >
+                  {CRM_TARGETS.map((t) => (
+                    <option key={t.value} value={t.value}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {crmTargetDraft && (
+                <div>
+                  <label className="block text-xs font-medium text-muted mb-1.5">
+                    Field mapping (optional — leave empty for auto-mapping)
+                  </label>
+                  <textarea
+                    value={crmFieldMapDraft}
+                    onChange={(e) => setCrmFieldMapDraft(e.target.value)}
+                    rows={5}
+                    placeholder={`{\n  "form_field_id": "twentyFieldName",\n  "submitted_by": "submittedBy"\n}`}
+                    className="w-full px-3 py-2 rounded-lg bg-background border border-border text-foreground text-xs font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
+                  />
+                  <p className="text-[11px] text-muted mt-1">
+                    Auto-mapping converts <code className="text-accent">snake_case</code> form
+                    IDs to <code className="text-accent">camelCase</code> Twenty field names.
+                    Override individual fields here if needed.
+                  </p>
+                </div>
+              )}
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={saveCrmConfig}
+                  disabled={savingCrm}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-accent text-white hover:bg-accent-hover disabled:opacity-50"
+                >
+                  {savingCrm ? "Saving…" : "Save"}
+                </button>
+                <button
+                  onClick={() => {
+                    setEditingCrm(false);
+                    setCrmTargetDraft(form.crmTarget || "");
+                    setCrmFieldMapDraft(
+                      form.crmFieldMap ? JSON.stringify(form.crmFieldMap, null, 2) : ""
+                    );
+                  }}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-muted hover:text-foreground"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* Stats */}
         {form.responses.length > 0 && (
           <div className="grid grid-cols-3 gap-3 mb-6">
