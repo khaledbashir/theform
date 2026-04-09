@@ -210,7 +210,7 @@ export default function PublicForm() {
             </button>
           </form>
         </div>
-        <p className="text-center text-xs text-muted/50 mt-4">Powered by BasheerForms</p>
+        <p className="text-center text-xs text-muted/50 mt-4">Powered by ANC</p>
       </div>
     </div>
   );

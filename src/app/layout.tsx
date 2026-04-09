@@ -5,8 +5,8 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "BasheerForms - AI Form Builder",
-  description: "Describe what you need. AI builds the form. Share it. See responses.",
+  title: "ANC Forms — AI Form Builder",
+  description: "Describe what you need. AI builds the form. Share it. Submissions flow straight into the ANC CRM.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
