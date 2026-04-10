@@ -39,19 +39,19 @@ const PRESETS = [
     icon: "🎨",
     label: "Design Request",
     crmTarget: "designRequests",
-    prompt: "An ANC Sports design request intake form. Use these EXACT field IDs (snake_case) in this order: requester_name, requester_email, client_name, venue_name, client_tri_code, deliverable_type (select: Ribbon graphic/Center-hung/Scoreboard/LED wall/Tunnel/Courtside/Dasherboard/Animation/Static graphic/Other), sport (select: NFL/NBA/MLB/NHL/MLS/WNBA/NCAA/Other), due_date (date), rush_request (checkbox), description (textarea, required), reference_notes (text). Title: 'ANC Design Request'. Description: 'Submit a design job to the ANC creative team'.",
+    prompt: "An ANC Sports design request intake form. Use these EXACT field IDs (snake_case) in this order: requester_name, requester_email, client_name, venue_name, client_tri_code, deliverable_type (select: Ribbon graphic/Center-hung/Scoreboard/LED wall/Tunnel/Courtside/Dasherboard/Animation/Static graphic/Other), sport (select: NFL/NBA/MLB/NHL/MLS/WNBA/NCAA/Other), due_date (date), rush_request (checkbox), description (textarea, required), reference_notes (text), reference_image (image, optional, accept image/*). Title: 'ANC Design Request'. Description: 'Submit a design job to the ANC creative team'.",
   },
   {
     icon: "🖨️",
     label: "Print Request (Britten)",
     crmTarget: "printRequests",
-    prompt: "An ANC Sports Britten print request form. Use these EXACT field IDs (snake_case): submitted_by, requester_email, client_name, sf_number, due_date (date), reprint (checkbox), rush_request (checkbox), baselines (number), home_plate (number), small_home_plate (number), other_qty (number), shipping_address (text), notes (textarea). Title: 'ANC Print Request'. Description: 'Britten-fabricated signage — baselines, home plate, courtside'.",
+    prompt: "An ANC Sports Britten print request form. Use these EXACT field IDs (snake_case): submitted_by, requester_email, client_name, sf_number, due_date (date), reprint (checkbox), rush_request (checkbox), baselines (number), home_plate (number), small_home_plate (number), other_qty (number), shipping_address (text), notes (textarea), design_file (file, optional, accept application/pdf,image/png,image/jpeg,application/postscript,application/illustrator). Title: 'ANC Print Request'. Description: 'Britten-fabricated signage — baselines, home plate, courtside'.",
   },
   {
     icon: "📦",
     label: "Parts Order",
     crmTarget: "partsOrders",
-    prompt: "An ANC internal parts ordering form. Use these EXACT field IDs: requestor_name, requestor_email, venue_name (text, required), parts_needed (textarea, required — list brand/model/spec), quantity (number), urgency (select: Normal/Rush/Emergency), shipping_address (text, required), notes (textarea). Title: 'ANC Parts Order'. Description: 'Internal parts ordering — cables, modules, replacements'.",
+    prompt: "An ANC internal parts ordering form. Use these EXACT field IDs: requestor_name, requestor_email, venue_name (text, required), parts_needed (textarea, required — list brand/model/spec), quantity (number), urgency (select: Normal/Rush/Emergency), shipping_address (text, required), notes (textarea), part_photo (image, optional, accept image/* — photo of the broken or needed part). Title: 'ANC Parts Order'. Description: 'Internal parts ordering — cables, modules, replacements'.",
   },
   {
     icon: "📺",
@@ -63,25 +63,25 @@ const PRESETS = [
     icon: "🖼️",
     label: "CG Design Request",
     crmTarget: "cgDesignRequests",
-    prompt: "An ANC CG design request form for team/venue graphics. Use these EXACT field IDs: request_title (text, required), requester_email, cg_client (text — team name), sport (select: NFL/NBA/MLB/NHL/MLS/WNBA/NCAA), team_name (text), due_date (date), client_tri_code (text), description (textarea, required). Title: 'ANC CG Design Request'. Description: 'Computer graphics for team/venue content'.",
+    prompt: "An ANC CG design request form for team/venue graphics. Use these EXACT field IDs: request_title (text, required), requester_email, cg_client (text — team name), sport (select: NFL/NBA/MLB/NHL/MLS/WNBA/NCAA), team_name (text), due_date (date), client_tri_code (text), description (textarea, required), reference_image (image, optional, accept image/* — example/inspiration shot). Title: 'ANC CG Design Request'. Description: 'Computer graphics for team/venue content'.",
   },
   {
     icon: "📋",
     label: "Walkthrough Log",
     crmTarget: "walkthroughLogs",
-    prompt: "An ANC technician walkthrough log for venue inspection. Use these EXACT field IDs: name (text, required — 'Venue walkthrough'), venue_name (text, required), walkthrough_date (date, required), result (select: Good/Partial/Problem Detected), tech_name (text, required), items_checked (textarea — list what was inspected), issues_found (textarea — any problems), photo_url (url). Title: 'Walkthrough Log'. Description: 'Log a venue walkthrough with any issues found'.",
+    prompt: "An ANC technician walkthrough log for venue inspection. Use these EXACT field IDs: name (text, required — 'Venue walkthrough'), venue_name (text, required), walkthrough_date (date, required), result (select: Good/Partial/Problem Detected), tech_name (text, required), items_checked (textarea — list what was inspected), issues_found (textarea — any problems), photo_url (image, optional, accept image/* — upload a photo of the venue or any issue found; the field type MUST be 'image' so the tech uploads a photo directly instead of pasting a URL). Title: 'Walkthrough Log'. Description: 'Log a venue walkthrough with any issues found'.",
   },
   {
     icon: "🎫",
     label: "Service Ticket",
     crmTarget: "serviceTickets",
-    prompt: "An ANC service ticket intake for hardware or software issues. Use these EXACT field IDs: name (text, required — ticket subject), reporter_name (text, required), reporter_email (email, required), venue_name (text, required), category (select: Hardware/Software/General/Network/Display), priority (select: Low/Medium/High), description (textarea, required), photo_url (url). Title: 'Service Ticket'. Description: 'Report an issue at any ANC venue'.",
+    prompt: "An ANC service ticket intake for hardware or software issues. Use these EXACT field IDs: name (text, required — ticket subject), reporter_name (text, required), reporter_email (email, required), venue_name (text, required), category (select: Hardware/Software/General/Network/Display), priority (select: Low/Medium/High), description (textarea, required), photo_url (image, optional, accept image/* — upload a photo of the issue; the field type MUST be 'image' so the reporter uploads a photo directly instead of pasting a URL). Title: 'Service Ticket'. Description: 'Report an issue at any ANC venue'.",
   },
   {
     icon: "🏟️",
     label: "Venue Intake",
     crmTarget: "",
-    prompt: "A new venue onboarding form for ANC Sports. Use these EXACT field IDs: venue_name (text, required), market (text), contact_name (text), contact_email (email, required), contact_phone (phone), venue_type (select: Stadium/Arena/Convention Center/University/Transit/Corporate/Retail), capacity (number), notes (textarea). Title: 'New Venue Intake'. Description: 'Add a new venue to the ANC network'.",
+    prompt: "A new venue onboarding form for ANC Sports. Use these EXACT field IDs: venue_name (text, required), market (text), contact_name (text), contact_email (email, required), contact_phone (phone), venue_type (select: Stadium/Arena/Convention Center/University/Transit/Corporate/Retail), capacity (number), notes (textarea), venue_photo (image, optional, accept image/* — exterior or interior shot of the venue), venue_layout (file, optional, accept application/pdf,image/png,image/jpeg — floor plan or layout document). Title: 'New Venue Intake'. Description: 'Add a new venue to the ANC network'.",
   },
 ];
 
