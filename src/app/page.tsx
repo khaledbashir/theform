@@ -38,6 +38,17 @@ interface ChatMessage {
   form?: Form;
 }
 
+// Lightweight in-memory draft used during a Custom (conversational) session.
+// It mirrors the GeneratedForm shape from the API but lives only in this
+// component until the user is happy and the draft gets saved.
+interface DraftForm {
+  id?: string; // Set after the first save → subsequent iterations PATCH it
+  title: string;
+  description: string;
+  fields: FormField[];
+  crmTarget?: string | null;
+}
+
 // ANC-specific presets — these auto-configure a Twenty CRM target so every
 // submission creates a record in the matching custom object. Field IDs in the
 // prompt use snake_case matching the Twenty field names (auto-mapped via
@@ -91,6 +102,37 @@ const PRESETS = [
     crmTarget: "",
     prompt: "A new venue onboarding form for ANC Sports. Use these EXACT field IDs: venue_name (text, required), market (text), contact_name (text), contact_email (email, required), contact_phone (phone), venue_type (select: Stadium/Arena/Convention Center/University/Transit/Corporate/Retail), capacity (number), notes (textarea), venue_photo (image, optional, accept image/* — exterior or interior shot of the venue), venue_layout (file, optional, accept application/pdf,image/png,image/jpeg — floor plan or layout document). Title: 'New Venue Intake'. Description: 'Add a new venue to the ANC network'.",
   },
+  {
+    icon: "🪄",
+    label: "Custom (chat with AI)",
+    crmTarget: "",
+    prompt: "", // empty prompt = conversational mode — AI asks clarifying questions first
+    converse: true,
+  },
+];
+
+// All field types the AI can generate, shown as small chips under the input
+// so users can see what's available without reading docs.
+const AVAILABLE_TYPES: Array<{ type: string; icon: string; label: string }> = [
+  { type: "text",      icon: "Aa",  label: "Text" },
+  { type: "email",     icon: "@",   label: "Email" },
+  { type: "phone",     icon: "☎",   label: "Phone" },
+  { type: "textarea",  icon: "¶",   label: "Long text" },
+  { type: "number",    icon: "#",   label: "Number" },
+  { type: "select",    icon: "▾",   label: "Dropdown" },
+  { type: "radio",     icon: "◉",   label: "Radio" },
+  { type: "checkbox",  icon: "☑",   label: "Checkbox" },
+  { type: "date",      icon: "📅",  label: "Date" },
+  { type: "time",      icon: "⏰",  label: "Time" },
+  { type: "datetime",  icon: "📆",  label: "Date+Time" },
+  { type: "url",       icon: "🔗",  label: "URL" },
+  { type: "image",     icon: "🖼",   label: "Image" },
+  { type: "file",      icon: "📎",  label: "File" },
+  { type: "signature", icon: "✍",   label: "Signature" },
+  { type: "scale",     icon: "▰",   label: "Scale slider" },
+  { type: "rating",    icon: "★",   label: "Star rating" },
+  { type: "yes_no",    icon: "✓✗",  label: "Yes/No" },
+  { type: "likert",    icon: "▬",   label: "Likert scale" },
 ];
 
 export default function Dashboard() {
@@ -104,6 +146,10 @@ export default function Dashboard() {
   const { toast, showToast, hideToast } = useToast();
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // Conversational mode state — set when the user picks the Custom preset
+  // and turns the chat into a multi-turn conversation with the AI.
+  const [conversing, setConversing] = useState(false);
+  const [draft, setDraft] = useState<DraftForm | null>(null);
 
   useEffect(() => {
     fetch("/api/forms")
@@ -118,9 +164,139 @@ export default function Dashboard() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
+  // Reset chat + draft + conversational mode (e.g. when switching presets)
+  const resetSession = () => {
+    setMessages([]);
+    setPreview(null);
+    setDraft(null);
+    setConversing(false);
+  };
+
+  // Start a Custom (conversational) session — opens a fresh chat with an
+  // AI greeting and waits for the user to describe what they need.
+  const startCustomConversation = () => {
+    resetSession();
+    setConversing(true);
+    setMessages([
+      {
+        role: "ai",
+        content:
+          "Sure — what kind of form do you need? Tell me what it's for, who's filling it out, and what info you want to collect. I'll ask follow-ups if I need them.",
+      },
+    ]);
+    setTimeout(() => inputRef.current?.focus(), 50);
+  };
+
+  // Conversational mode handler — runs every user message after Custom is
+  // picked. Hits /api/forms/converse with the running history + the current
+  // draft. AI either asks more questions or returns an updated form.
+  const sendConversationTurn = async (userText: string) => {
+    setMessages((prev) => [...prev, { role: "user", content: userText }]);
+    setPrompt("");
+    setLoading(true);
+    try {
+      // Build the conversation history the AI sees. Convert local "ai" role
+      // to "assistant" which is what OpenAI-compatible APIs expect.
+      const history = [
+        ...messages,
+        { role: "user" as const, content: userText },
+      ].map((m) => ({
+        role: m.role === "ai" ? ("assistant" as const) : ("user" as const),
+        content: m.content,
+      }));
+
+      const res = await fetch("/api/forms/converse", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: history,
+          currentForm: draft
+            ? { title: draft.title, description: draft.description, fields: draft.fields }
+            : null,
+        }),
+      });
+      const result = await res.json();
+
+      if (result.type === "question") {
+        setMessages((prev) => [...prev, { role: "ai", content: result.message }]);
+        return;
+      }
+
+      if (result.type === "form") {
+        // Save (or update) the draft in the database.
+        let saved: Form;
+        if (draft?.id) {
+          // PATCH the existing draft
+          const patchRes = await fetch(`/api/forms/${draft.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title: result.title,
+              description: result.description,
+              fields: result.fields,
+            }),
+          });
+          saved = await patchRes.json();
+          setForms((prev) => prev.map((f) => (f.id === saved.id ? { ...f, ...saved } : f)));
+        } else {
+          // First-time save — POST a new form. We do NOT pass a prompt so the
+          // server creates a row directly from the conversational result.
+          // To stay compatible with the existing POST /api/forms (which calls
+          // generateForm internally), we do a minimal POST of a stringified
+          // hint and let the AI honor what we already shaped via the converse
+          // endpoint. Cleaner: a new POST endpoint that takes a pre-built form.
+          // Implementing the cleaner path inline here:
+          const createRes = await fetch("/api/forms/from-converse", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title: result.title,
+              description: result.description,
+              fields: result.fields,
+            }),
+          });
+          saved = await createRes.json();
+          setForms((prev) => [{ ...saved, _count: { responses: 0 } }, ...prev]);
+        }
+
+        setDraft({
+          id: saved.id,
+          title: result.title,
+          description: result.description,
+          fields: result.fields,
+        });
+        setPreview(saved);
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "ai",
+            content: draft?.id
+              ? `Updated. ${result.fields.length} field${result.fields.length !== 1 ? "s" : ""}. Tell me what to change next, or grab the link from the right.`
+              : `Built "${result.title}" with ${result.fields.length} field${result.fields.length !== 1 ? "s" : ""}. Tell me what to change, or grab the link from the right when you're happy.`,
+            form: saved,
+          },
+        ]);
+      }
+    } catch (e) {
+      setMessages((prev) => [
+        ...prev,
+        { role: "ai", content: "Sorry, that didn't work. Try rephrasing?" },
+      ]);
+    } finally {
+      setLoading(false);
+      inputRef.current?.focus();
+    }
+  };
+
   const createForm = async (overridePrompt?: string, crmTarget?: string) => {
     const text = overridePrompt || prompt.trim();
     if (!text) return;
+
+    // If we're in conversational mode, route through the converse handler
+    // instead of single-shot generation.
+    if (conversing) {
+      return sendConversationTurn(text);
+    }
 
     setMessages((prev) => [...prev, { role: "user", content: text }]);
     setPrompt("");
@@ -237,20 +413,32 @@ export default function Dashboard() {
                       Describe it in your own words, or start from a preset.
                     </p>
                     <div className="grid grid-cols-2 gap-2">
-                      {PRESETS.map((p) => (
+                      {PRESETS.map((p: any) => (
                         <button
                           key={p.label}
-                          onClick={() => createForm(p.prompt, p.crmTarget)}
+                          onClick={() =>
+                            p.converse
+                              ? startCustomConversation()
+                              : createForm(p.prompt, p.crmTarget)
+                          }
                           disabled={loading}
-                          className="text-left p-3 rounded-xl bg-surface border border-border hover:border-accent/40 hover:bg-accent/5 transition-all group disabled:opacity-50"
+                          className={`text-left p-3 rounded-xl bg-surface border transition-all group disabled:opacity-50 ${
+                            p.converse
+                              ? "border-accent/40 hover:border-accent hover:bg-accent/5"
+                              : "border-border hover:border-accent/40 hover:bg-accent/5"
+                          }`}
                         >
                           <div className="flex items-start justify-between mb-1">
                             <span className="text-lg block">{p.icon}</span>
-                            {p.crmTarget && (
+                            {p.converse ? (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-accent text-white font-bold">
+                                CHAT
+                              </span>
+                            ) : p.crmTarget ? (
                               <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-accent/10 text-accent font-medium">
                                 → CRM
                               </span>
-                            )}
+                            ) : null}
                           </div>
                           <span className="text-sm font-medium text-foreground group-hover:text-accent transition-colors block">
                             {p.label}
@@ -328,8 +516,8 @@ export default function Dashboard() {
             </div>
 
             {/* Input bar */}
-            <div className="p-4 border-t border-border">
-              {hasHistory && (
+            <div className="p-4 border-t border-border bg-surface">
+              {hasHistory && !conversing && (
                 <div className="flex gap-1.5 mb-3 overflow-x-auto pb-1 scrollbar-hide">
                   {PRESETS.slice(0, 4).map((p) => (
                     <button
@@ -343,6 +531,33 @@ export default function Dashboard() {
                   ))}
                 </div>
               )}
+              {conversing && (
+                <div className="flex items-center justify-between mb-2 text-xs">
+                  <span className="text-accent font-medium flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
+                    Custom chat — AI will ask follow-ups
+                  </span>
+                  <button
+                    onClick={resetSession}
+                    className="text-muted hover:text-foreground"
+                  >
+                    Exit chat
+                  </button>
+                </div>
+              )}
+              {/* Field type hint chips — subtle row showing what's available */}
+              <div className="flex gap-1 mb-2 overflow-x-auto pb-1 scrollbar-hide" title="Field types the AI can use">
+                {AVAILABLE_TYPES.map((t) => (
+                  <span
+                    key={t.type}
+                    className="shrink-0 inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-surface-2 border border-border text-muted"
+                    title={t.type}
+                  >
+                    <span className="text-foreground/70">{t.icon}</span>
+                    {t.label}
+                  </span>
+                ))}
+              </div>
               <div className="flex gap-2">
                 <textarea
                   ref={inputRef}

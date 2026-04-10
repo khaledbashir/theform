@@ -107,3 +107,110 @@ Only include "min"/"max"/"step"/"unit" for scale/rating.`,
   if (!jsonMatch) throw new Error("Failed to generate form");
   return JSON.parse(jsonMatch[0]);
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// Conversational mode — multi-turn form building
+// ────────────────────────────────────────────────────────────────────────────
+//
+// The user picks the "Custom" preset and the AI guides them through creation
+// instead of one-shotting from a single prompt. Each turn the AI either asks
+// a clarifying question or returns a complete form. If a draft form already
+// exists, the AI can iterate on it (move/edit/remove/add fields) on user
+// command. Iterations always return a COMPLETE updated form, not a diff —
+// makes the frontend trivial.
+
+export type ConverseMessage = { role: "user" | "assistant"; content: string };
+
+export type ConverseResponse =
+  | { type: "question"; message: string }
+  | { type: "form"; title: string; description: string; fields: FormField[] };
+
+const FIELD_TYPE_RULES = `
+- Use "select" for lists of 3-7 options, "radio" for 2-4 options
+- Use "checkbox" for multi-select
+- Use "textarea" for open-ended responses
+- Use "email", "phone", "date", "number", "url" for specific data
+- Use "image" for photo uploads, "file" for documents (set "accept" appropriately)
+- Use "scale" for severity/urgency/percent (1-10, 0-100, etc) — set min, max, step, optional unit
+- Use "rating" for star ratings (default 1-5; pass max for ten-star)
+- Use "signature" when the form needs a handwritten sign-off
+- Use "time" for HH:MM, "datetime" for date+time together
+- Use "yes_no" for single boolean questions
+- Use "likert" for survey-style agreement scales (5 buttons)
+`;
+
+export async function converseAboutForm(
+  messages: ConverseMessage[],
+  currentForm: GeneratedForm | null
+): Promise<ConverseResponse> {
+  const systemContent = `You are an interactive form-building assistant for ANC Sports operations. Your job is to help the user create or refine the perfect form for their workflow.
+
+You have TWO response modes — pick one per turn:
+
+1. ASK A QUESTION when you don't have enough information to build a complete form yet, OR when the user is ambiguous about a refinement. Output:
+   {"type": "question", "message": "your one-line question"}
+
+2. GENERATE OR UPDATE THE FORM when you have enough info, or when the user explicitly says "go", "build it", "create", "that's enough", "looks good", etc., or when they're refining an existing draft. Output:
+   {"type": "form", "title": "...", "description": "...", "fields": [...]}
+
+RULES:
+- Output VALID JSON only. No markdown, no code fences, no extra text.
+- Ask ONE focused question at a time. Be brief, conversational, and direct.
+- Never ask more than one question in a row without progressing — if the user gave you something useful, move forward.
+- When iterating on an existing form, return the COMPLETE updated form (preserve unchanged fields exactly, apply the user's change).
+- Field IDs must be lowercase snake_case and stable across iterations (don't rename fields unless asked).
+- Always include basic contact fields (name + email) unless the user explicitly says no.
+- Aim for 5-12 fields unless the user wants more or fewer.
+
+FIELD TYPES AVAILABLE:
+${FIELD_TYPE_RULES}
+
+ITERATION COMMANDS to recognize:
+- "move X to top/bottom" → reorder fields
+- "remove X" / "delete X" → drop a field
+- "add a Y for Z" → append a new field
+- "make X required/optional" → toggle required
+- "change X to a Y" → change a field's type
+- "rename X to Y" → change a field's label
+
+${currentForm ? `CURRENT DRAFT FORM (the user is iterating on this):
+${JSON.stringify(currentForm, null, 2)}
+
+Apply their refinement and return the complete updated form.` : "No draft form exists yet — you're starting fresh."}`;
+
+  const completion = await getClient().chat.completions.create({
+    model: process.env.AI_MODEL || "MiniMax-M2.7",
+    max_tokens: 4096,
+    messages: [
+      { role: "system", content: systemContent },
+      ...messages.map((m) => ({ role: m.role, content: m.content })),
+    ],
+  });
+
+  const text = completion.choices[0]?.message?.content || "";
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    // If the model breaks the contract and returns prose, treat it as a
+    // question so the conversation can continue rather than crashing.
+    return { type: "question", message: text || "Could you tell me a bit more about what the form should do?" };
+  }
+  let parsed: any;
+  try {
+    parsed = JSON.parse(jsonMatch[0]);
+  } catch {
+    return { type: "question", message: "Sorry, I got confused there. Can you describe it again?" };
+  }
+  if (parsed.type === "question" && typeof parsed.message === "string") {
+    return { type: "question", message: parsed.message };
+  }
+  if (parsed.type === "form" && Array.isArray(parsed.fields)) {
+    return {
+      type: "form",
+      title: String(parsed.title || "Untitled"),
+      description: String(parsed.description || ""),
+      fields: parsed.fields,
+    };
+  }
+  // Unrecognised shape — bounce back to a question
+  return { type: "question", message: "Hmm, I need a bit more detail. What's the form for?" };
+}
