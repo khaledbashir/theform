@@ -182,12 +182,15 @@ export default function Dashboard() {
   return (
     <div className="h-screen flex flex-col">
       {/* Header */}
-      <header className="border-b border-border px-6 py-3 flex items-center justify-between shrink-0">
+      <header className="border-b border-border bg-surface px-6 py-3 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center">
-            <span className="text-white font-bold text-[10px] tracking-tight">ANC</span>
-          </div>
-          <h1 className="text-lg font-semibold text-foreground">ANC Forms</h1>
+          <img
+            src="/anc-logo.png"
+            alt="ANC Sports"
+            className="h-7 w-auto"
+          />
+          <span className="h-5 w-px bg-border" />
+          <h1 className="text-lg font-semibold text-foreground">Forms</h1>
           {!fetching && forms.length > 0 && (
             <div className="hidden sm:flex items-center gap-3 ml-4 pl-4 border-l border-border">
               <span className="text-xs text-muted">

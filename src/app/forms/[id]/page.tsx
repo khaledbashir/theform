@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { formatDistanceToNow, format } from "date-fns";
+import { formatDistanceToNow, format, subDays, startOfDay } from "date-fns";
 import { detectSubmitter } from "@/lib/submitter";
 
 interface FormField {
@@ -118,6 +118,10 @@ const CRM_TARGETS = [
   { value: "checklistItems", label: "Checklist Item (30/60/90)" },
 ];
 
+type DateFilter = "today" | "week" | "month" | "all";
+
+const NEW_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24h
+
 export default function FormResponses() {
   const { id } = useParams();
   const [form, setForm] = useState<FormData | null>(null);
@@ -126,6 +130,82 @@ export default function FormResponses() {
   const [savingCrm, setSavingCrm] = useState(false);
   const [crmTargetDraft, setCrmTargetDraft] = useState("");
   const [crmFieldMapDraft, setCrmFieldMapDraft] = useState("");
+  // Dashboard state
+  const [search, setSearch] = useState("");
+  const [dateFilter, setDateFilter] = useState<DateFilter>("all");
+  const [drawerResp, setDrawerResp] = useState<Response | null>(null);
+  const [showAnalytics, setShowAnalytics] = useState(true);
+
+  // Filtered + searched responses derived from raw + filters.
+  const filteredResponses = useMemo(() => {
+    if (!form) return [];
+    const now = Date.now();
+    const cutoff: Record<DateFilter, number> = {
+      today: now - 24 * 60 * 60 * 1000,
+      week: now - 7 * 24 * 60 * 60 * 1000,
+      month: now - 30 * 24 * 60 * 60 * 1000,
+      all: 0,
+    };
+    const min = cutoff[dateFilter];
+    const q = search.trim().toLowerCase();
+    return form.responses.filter((r) => {
+      // Date filter
+      if (min && new Date(r.createdAt).getTime() < min) return false;
+      // Search filter — match across all field values + submitter
+      if (q) {
+        const sub = detectSubmitter(r.data).label.toLowerCase();
+        if (sub.includes(q)) return true;
+        for (const v of Object.values(r.data || {})) {
+          const s = Array.isArray(v) ? v.join(" ") : String(v ?? "");
+          if (s.toLowerCase().includes(q)) return true;
+        }
+        return false;
+      }
+      return true;
+    });
+  }, [form, search, dateFilter]);
+
+  // Submission volume sparkline data — daily counts for the last 14 days.
+  const sparkline = useMemo(() => {
+    if (!form) return { points: [] as number[], max: 0, total: 0, days: 14 };
+    const days = 14;
+    const today = startOfDay(new Date());
+    const buckets = new Array(days).fill(0);
+    for (const r of form.responses) {
+      const d = startOfDay(new Date(r.createdAt));
+      const diff = Math.floor((today.getTime() - d.getTime()) / (24 * 60 * 60 * 1000));
+      if (diff >= 0 && diff < days) buckets[days - 1 - diff]++;
+    }
+    return { points: buckets, max: Math.max(1, ...buckets), total: form.responses.length, days };
+  }, [form]);
+
+  // Field analytics — for select/radio/scale/rating/yes_no/likert, compute
+  // value distribution across the filtered responses.
+  const analytics = useMemo(() => {
+    if (!form) return [] as Array<{ field: FormField; counts: Array<{ label: string; count: number }>; total: number }>;
+    const targets = ["select", "radio", "yes_no", "likert", "rating", "scale"];
+    return form.fields
+      .filter((f) => targets.includes(f.type))
+      .map((field) => {
+        const counts: Record<string, number> = {};
+        for (const r of filteredResponses) {
+          const v = r.data?.[field.id];
+          if (v == null || v === "") continue;
+          if (Array.isArray(v)) {
+            for (const x of v) counts[String(x)] = (counts[String(x)] || 0) + 1;
+          } else {
+            counts[String(v)] = (counts[String(v)] || 0) + 1;
+          }
+        }
+        const total = Object.values(counts).reduce((s, x) => s + x, 0);
+        const sorted = Object.entries(counts)
+          .map(([label, count]) => ({ label, count }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 6);
+        return { field, counts: sorted, total };
+      })
+      .filter((a) => a.total > 0);
+  }, [form, filteredResponses]);
 
   useEffect(() => {
     fetch(`/api/forms/${id}`)
@@ -350,21 +430,21 @@ export default function FormResponses() {
           )}
         </div>
 
-        {/* Stats */}
+        {/* Stats + Sparkline */}
         {form.responses.length > 0 && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-            <div className="bg-surface border border-border rounded-xl p-4">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+            <div className="dash-card p-4">
               <p className="text-xs text-muted mb-1">Total Responses</p>
               <p className="text-2xl font-semibold text-foreground">{form.responses.length}</p>
             </div>
-            <div className="bg-surface border border-border rounded-xl p-4">
+            <div className="dash-card p-4">
               <p className="text-xs text-muted mb-1">Fields</p>
               <p className="text-2xl font-semibold text-foreground">{form.fields.length}</p>
             </div>
-            <div className="bg-surface border border-border rounded-xl p-4">
+            <div className="dash-card p-4">
               <p className="text-xs text-muted mb-1">First</p>
               <p
-                className="text-lg font-semibold text-foreground"
+                className="text-base font-semibold text-foreground"
                 title={new Date(form.responses[form.responses.length - 1].createdAt).toLocaleString()}
               >
                 {formatDistanceToNow(
@@ -373,34 +453,155 @@ export default function FormResponses() {
                 )}
               </p>
             </div>
-            <div className="bg-surface border border-border rounded-xl p-4">
+            <div className="dash-card p-4">
               <p className="text-xs text-muted mb-1">Latest</p>
               <p
-                className="text-lg font-semibold text-foreground"
+                className="text-base font-semibold text-foreground"
                 title={new Date(form.responses[0].createdAt).toLocaleString()}
               >
                 {formatDistanceToNow(new Date(form.responses[0].createdAt), { addSuffix: true })}
               </p>
             </div>
+            {/* Submission volume sparkline — last 14 days */}
+            <div className="dash-card p-4 col-span-2 md:col-span-1">
+              <p className="text-xs text-muted mb-1">Last 14 days</p>
+              <svg viewBox="0 0 140 36" className="w-full h-9" preserveAspectRatio="none">
+                {sparkline.points.map((v, i) => {
+                  const w = 140 / sparkline.points.length;
+                  const h = (v / sparkline.max) * 30;
+                  return (
+                    <rect
+                      key={i}
+                      x={i * w + 1}
+                      y={36 - h - 2}
+                      width={w - 2}
+                      height={Math.max(h, 2)}
+                      rx={1}
+                      className="fill-accent"
+                      opacity={v === 0 ? 0.15 : 0.85}
+                    >
+                      <title>{v} on day -{sparkline.points.length - 1 - i}</title>
+                    </rect>
+                  );
+                })}
+              </svg>
+            </div>
+          </div>
+        )}
+
+        {/* Field Analytics — distribution charts for select/radio/scale/rating/yes_no/likert */}
+        {analytics.length > 0 && (
+          <div className="dash-card p-5 mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <span className="text-base">📊</span>
+                <h3 className="text-sm font-semibold text-foreground">Field Analytics</h3>
+                <span className="text-[10px] text-muted">({filteredResponses.length} response{filteredResponses.length !== 1 && "s"})</span>
+              </div>
+              <button
+                onClick={() => setShowAnalytics((v) => !v)}
+                className="text-xs text-muted hover:text-foreground"
+              >
+                {showAnalytics ? "Hide" : "Show"}
+              </button>
+            </div>
+            {showAnalytics && (
+              <div className="grid gap-5 md:grid-cols-2">
+                {analytics.map(({ field, counts, total }) => (
+                  <div key={field.id}>
+                    <p className="text-xs font-medium text-foreground mb-2">{field.label}</p>
+                    <div className="space-y-1">
+                      {counts.map(({ label, count }) => {
+                        const pct = total > 0 ? (count / total) * 100 : 0;
+                        return (
+                          <div key={label} className="flex items-center gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between mb-0.5">
+                                <span className="text-[11px] text-muted truncate">{label}</span>
+                                <span className="text-[11px] text-foreground tabular-nums shrink-0 ml-2">
+                                  {count} <span className="text-muted">({Math.round(pct)}%)</span>
+                                </span>
+                              </div>
+                              <div className="h-1.5 bg-surface-2 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-accent rounded-full transition-all"
+                                  style={{ width: `${pct}%` }}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Toolbar — search + date filter (only when responses exist) */}
+        {form.responses.length > 0 && (
+          <div className="dash-card p-3 mb-4 flex flex-wrap items-center gap-3">
+            <div className="flex-1 min-w-[220px] relative">
+              <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-4.3-4.3M10 17a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z" />
+              </svg>
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search responses…"
+                className="w-full pl-9 pr-3 py-2 rounded-lg bg-background border border-border text-foreground placeholder-muted text-sm focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
+              />
+            </div>
+            <div className="flex gap-1 bg-background border border-border rounded-lg p-0.5">
+              {(["today", "week", "month", "all"] as const).map((d) => (
+                <button
+                  key={d}
+                  onClick={() => setDateFilter(d)}
+                  className={`text-xs px-3 py-1.5 rounded-md transition-colors ${
+                    dateFilter === d ? "bg-accent text-white" : "text-muted hover:text-foreground"
+                  }`}
+                >
+                  {d === "today" ? "Today" : d === "week" ? "7 days" : d === "month" ? "30 days" : "All time"}
+                </button>
+              ))}
+            </div>
+            {(search || dateFilter !== "all") && (
+              <span className="text-xs text-muted">
+                {filteredResponses.length} of {form.responses.length}
+              </span>
+            )}
           </div>
         )}
 
         {form.responses.length === 0 ? (
-          <div className="bg-surface border border-border rounded-xl p-12 text-center">
+          <div className="dash-card p-12 text-center">
             <p className="text-muted mb-2">No responses yet.</p>
             <button onClick={copyLink} className="text-sm text-accent hover:text-accent-hover">
               Copy the form link to share it
             </button>
           </div>
+        ) : filteredResponses.length === 0 ? (
+          <div className="dash-card p-8 text-center">
+            <p className="text-sm text-muted mb-2">No responses match your filters.</p>
+            <button
+              onClick={() => { setSearch(""); setDateFilter("all"); }}
+              className="text-xs text-accent hover:text-accent-hover"
+            >
+              Clear filters
+            </button>
+          </div>
         ) : view === "table" ? (
-          <div className="bg-surface border border-border rounded-xl overflow-x-auto">
+          <div className="dash-card overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border">
                   <th className="text-left py-3 px-4 font-medium text-muted">#</th>
                   <th className="text-left py-3 px-4 font-medium text-muted whitespace-nowrap">Submitter</th>
                   {form.fields.map((f) => (
-                    <th key={f.id} className="text-left py-3 px-4 font-medium text-muted">
+                    <th key={f.id} className="text-left py-3 px-4 font-medium text-muted whitespace-nowrap">
                       {f.label}
                     </th>
                   ))}
@@ -408,11 +609,23 @@ export default function FormResponses() {
                 </tr>
               </thead>
               <tbody>
-                {form.responses.map((resp, i) => {
+                {filteredResponses.map((resp, i) => {
                   const submitter = detectSubmitter(resp.data);
+                  const isNew = Date.now() - new Date(resp.createdAt).getTime() < NEW_THRESHOLD_MS;
                   return (
-                    <tr key={resp.id} className="border-b border-border/50 hover:bg-surface-2/50">
-                      <td className="py-3 px-4 text-muted">{i + 1}</td>
+                    <tr
+                      key={resp.id}
+                      className="border-b border-border/50 hover:bg-accent-subtle cursor-pointer transition-colors"
+                      onClick={() => setDrawerResp(resp)}
+                    >
+                      <td className="py-3 px-4 text-muted whitespace-nowrap">
+                        <div className="flex items-center gap-1.5">
+                          <span>{i + 1}</span>
+                          {isNew && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-accent text-white font-bold">NEW</span>
+                          )}
+                        </div>
+                      </td>
                       <td className="py-3 px-4 whitespace-nowrap">
                         <span
                           className={`text-sm font-medium ${
@@ -442,14 +655,22 @@ export default function FormResponses() {
           </div>
         ) : (
           <div className="grid gap-4 md:grid-cols-2">
-            {form.responses.map((resp, i) => {
+            {filteredResponses.map((resp, i) => {
               const submitter = detectSubmitter(resp.data);
+              const isNew = Date.now() - new Date(resp.createdAt).getTime() < NEW_THRESHOLD_MS;
               return (
-                <div key={resp.id} className="bg-surface border border-border rounded-xl p-5">
+                <button
+                  key={resp.id}
+                  onClick={() => setDrawerResp(resp)}
+                  className="dash-card p-5 text-left"
+                >
                   <div className="flex justify-between items-start mb-4 gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 mb-0.5">
                         <span className="text-xs font-medium text-accent">#{i + 1}</span>
+                        {isNew && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-accent text-white font-bold">NEW</span>
+                        )}
                         <span
                           className={`text-sm font-semibold truncate ${
                             submitter.isAnonymous ? "text-muted italic" : "text-foreground"
@@ -476,12 +697,65 @@ export default function FormResponses() {
                       </div>
                     ))}
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>
         )}
       </div>
+
+      {/* Response Detail Drawer — slides in from the right */}
+      {drawerResp && (
+        <>
+          {/* Backdrop */}
+          <div
+            onClick={() => setDrawerResp(null)}
+            className="fixed inset-0 bg-black/30 z-40 animate-toast"
+          />
+          {/* Panel */}
+          <div className="fixed right-0 top-0 bottom-0 w-full max-w-lg bg-surface border-l border-border z-50 overflow-y-auto shadow-2xl">
+            <div className="sticky top-0 bg-surface border-b border-border px-5 py-4 flex items-center justify-between">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs text-muted">Response detail</p>
+                <h3 className="text-base font-semibold text-foreground truncate">
+                  {detectSubmitter(drawerResp.data).label}
+                </h3>
+                <p
+                  className="text-xs text-muted mt-0.5"
+                  title={format(new Date(drawerResp.createdAt), "PPpp")}
+                >
+                  Submitted {formatDistanceToNow(new Date(drawerResp.createdAt), { addSuffix: true })}
+                  {" • "}
+                  {format(new Date(drawerResp.createdAt), "PPp")}
+                </p>
+              </div>
+              <button
+                onClick={() => setDrawerResp(null)}
+                className="ml-3 shrink-0 w-8 h-8 rounded-lg bg-surface-2 hover:bg-border flex items-center justify-center text-muted hover:text-foreground"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              {form.fields.map((f) => (
+                <div key={f.id} className="border-b border-border/40 pb-3 last:border-0">
+                  <p className="text-[11px] uppercase tracking-wide text-muted font-medium mb-1">{f.label}</p>
+                  <div className="text-sm text-foreground">
+                    {renderCell(f, drawerResp.data[f.id])}
+                  </div>
+                </div>
+              ))}
+              {/* Raw JSON for the curious */}
+              <details className="text-xs">
+                <summary className="text-muted cursor-pointer hover:text-foreground">Raw JSON</summary>
+                <pre className="mt-2 p-3 rounded-lg bg-background border border-border overflow-x-auto text-[11px] text-muted">
+                  {JSON.stringify(drawerResp.data, null, 2)}
+                </pre>
+              </details>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
