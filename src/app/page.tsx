@@ -22,6 +22,10 @@ interface Form {
   fields?: FormField[];
   createdAt: string;
   _count: { responses: number };
+  // Added by GET /api/forms — null if no responses yet
+  lastResponseAt?: string | null;
+  // Twenty CRM custom-object name (e.g. "designRequests"), null if not connected
+  crmTarget?: string | null;
 }
 
 interface ChatMessage {
@@ -508,18 +512,44 @@ export default function Dashboard() {
                   >
                     <div className="flex items-start justify-between">
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <h3 className="font-medium text-foreground truncate">{form.title}</h3>
-                          {form._count.responses > 0 && (
-                            <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full bg-success/10 text-success font-medium">
-                              {form._count.responses}
+                          {/* Big response count pill — always shown so 0-response forms are visible too */}
+                          <span
+                            className={`shrink-0 inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-semibold ${
+                              form._count.responses > 0
+                                ? "bg-success/15 text-success"
+                                : "bg-surface-2 text-muted border border-border"
+                            }`}
+                          >
+                            {form._count.responses}
+                            <span className="font-normal opacity-80">
+                              {form._count.responses === 1 ? "response" : "responses"}
+                            </span>
+                          </span>
+                          {form.crmTarget && (
+                            <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-accent/10 text-accent font-medium">
+                              → {form.crmTarget}
                             </span>
                           )}
                         </div>
-                        <p className="text-sm text-muted truncate mt-0.5">{form.description}</p>
-                        <span className="text-xs text-muted mt-1.5 block">
-                          {formatDistanceToNow(new Date(form.createdAt), { addSuffix: true })}
-                        </span>
+                        <p className="text-sm text-muted truncate mt-1">{form.description}</p>
+                        <div className="flex items-center gap-3 mt-1.5 text-xs text-muted">
+                          <span title={new Date(form.createdAt).toLocaleString()}>
+                            Created {formatDistanceToNow(new Date(form.createdAt), { addSuffix: true })}
+                          </span>
+                          {form.lastResponseAt && (
+                            <>
+                              <span className="opacity-50">•</span>
+                              <span
+                                className="text-success/80"
+                                title={new Date(form.lastResponseAt).toLocaleString()}
+                              >
+                                Last submitted {formatDistanceToNow(new Date(form.lastResponseAt), { addSuffix: true })}
+                              </span>
+                            </>
+                          )}
+                        </div>
                       </div>
                       <div className="flex items-center gap-2 ml-4 shrink-0 opacity-60 group-hover:opacity-100 transition-opacity">
                         <button

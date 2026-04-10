@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow, format } from "date-fns";
+import { detectSubmitter } from "@/lib/submitter";
 
 interface FormField {
   id: string;
@@ -47,6 +48,7 @@ interface FormData {
   description: string;
   fields: FormField[];
   responses: Response[];
+  createdAt: string;
   crmTarget?: string | null;
   crmFieldMap?: Record<string, string> | null;
 }
@@ -157,9 +159,24 @@ export default function FormResponses() {
               &larr; Back
             </Link>
             <h1 className="text-xl font-semibold text-foreground">{form.title}</h1>
-            <p className="text-sm text-muted">
-              {form.responses.length} response{form.responses.length !== 1 && "s"}
-            </p>
+            <div className="flex items-center gap-3 text-sm text-muted mt-0.5 flex-wrap">
+              <span>
+                <span className="text-foreground font-medium">{form.responses.length}</span>{" "}
+                response{form.responses.length !== 1 && "s"}
+              </span>
+              <span className="opacity-50">•</span>
+              <span title={new Date(form.createdAt).toLocaleString()}>
+                Form created {formatDistanceToNow(new Date(form.createdAt), { addSuffix: true })}
+              </span>
+              {form.crmTarget && (
+                <>
+                  <span className="opacity-50">•</span>
+                  <span className="text-accent">
+                    → CRM: {form.crmTarget}
+                  </span>
+                </>
+              )}
+            </div>
           </div>
           <div className="flex gap-2">
             <button
@@ -284,7 +301,7 @@ export default function FormResponses() {
 
         {/* Stats */}
         {form.responses.length > 0 && (
-          <div className="grid grid-cols-3 gap-3 mb-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
             <div className="bg-surface border border-border rounded-xl p-4">
               <p className="text-xs text-muted mb-1">Total Responses</p>
               <p className="text-2xl font-semibold text-foreground">{form.responses.length}</p>
@@ -294,8 +311,23 @@ export default function FormResponses() {
               <p className="text-2xl font-semibold text-foreground">{form.fields.length}</p>
             </div>
             <div className="bg-surface border border-border rounded-xl p-4">
+              <p className="text-xs text-muted mb-1">First</p>
+              <p
+                className="text-lg font-semibold text-foreground"
+                title={new Date(form.responses[form.responses.length - 1].createdAt).toLocaleString()}
+              >
+                {formatDistanceToNow(
+                  new Date(form.responses[form.responses.length - 1].createdAt),
+                  { addSuffix: true }
+                )}
+              </p>
+            </div>
+            <div className="bg-surface border border-border rounded-xl p-4">
               <p className="text-xs text-muted mb-1">Latest</p>
-              <p className="text-lg font-semibold text-foreground">
+              <p
+                className="text-lg font-semibold text-foreground"
+                title={new Date(form.responses[0].createdAt).toLocaleString()}
+              >
                 {formatDistanceToNow(new Date(form.responses[0].createdAt), { addSuffix: true })}
               </p>
             </div>
@@ -315,53 +347,87 @@ export default function FormResponses() {
               <thead>
                 <tr className="border-b border-border">
                   <th className="text-left py-3 px-4 font-medium text-muted">#</th>
+                  <th className="text-left py-3 px-4 font-medium text-muted whitespace-nowrap">Submitter</th>
                   {form.fields.map((f) => (
                     <th key={f.id} className="text-left py-3 px-4 font-medium text-muted">
                       {f.label}
                     </th>
                   ))}
-                  <th className="text-left py-3 px-4 font-medium text-muted">Submitted</th>
+                  <th className="text-left py-3 px-4 font-medium text-muted whitespace-nowrap">Submitted</th>
                 </tr>
               </thead>
               <tbody>
-                {form.responses.map((resp, i) => (
-                  <tr key={resp.id} className="border-b border-border/50 hover:bg-surface-2/50">
-                    <td className="py-3 px-4 text-muted">{i + 1}</td>
-                    {form.fields.map((f) => (
-                      <td key={f.id} className="py-3 px-4 text-foreground max-w-xs truncate">
-                        {renderCell(f, resp.data[f.id])}
+                {form.responses.map((resp, i) => {
+                  const submitter = detectSubmitter(resp.data);
+                  return (
+                    <tr key={resp.id} className="border-b border-border/50 hover:bg-surface-2/50">
+                      <td className="py-3 px-4 text-muted">{i + 1}</td>
+                      <td className="py-3 px-4 whitespace-nowrap">
+                        <span
+                          className={`text-sm font-medium ${
+                            submitter.isAnonymous ? "text-muted italic" : "text-foreground"
+                          }`}
+                          title={submitter.sourceField ? `from field: ${submitter.sourceField}` : "no submitter field detected"}
+                        >
+                          {submitter.label}
+                        </span>
                       </td>
-                    ))}
-                    <td className="py-3 px-4 text-muted whitespace-nowrap">
-                      {formatDistanceToNow(new Date(resp.createdAt), { addSuffix: true })}
-                    </td>
-                  </tr>
-                ))}
+                      {form.fields.map((f) => (
+                        <td key={f.id} className="py-3 px-4 text-foreground max-w-xs truncate">
+                          {renderCell(f, resp.data[f.id])}
+                        </td>
+                      ))}
+                      <td
+                        className="py-3 px-4 text-muted whitespace-nowrap"
+                        title={format(new Date(resp.createdAt), "PPpp")}
+                      >
+                        {formatDistanceToNow(new Date(resp.createdAt), { addSuffix: true })}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         ) : (
           <div className="grid gap-4 md:grid-cols-2">
-            {form.responses.map((resp, i) => (
-              <div key={resp.id} className="bg-surface border border-border rounded-xl p-5">
-                <div className="flex justify-between items-center mb-4">
-                  <span className="text-sm font-medium text-accent">#{i + 1}</span>
-                  <span className="text-xs text-muted">
-                    {formatDistanceToNow(new Date(resp.createdAt), { addSuffix: true })}
-                  </span>
-                </div>
-                <div className="space-y-3">
-                  {form.fields.map((f) => (
-                    <div key={f.id}>
-                      <span className="text-xs text-muted">{f.label}</span>
-                      <div className="text-sm text-foreground mt-0.5">
-                        {renderCell(f, resp.data[f.id])}
+            {form.responses.map((resp, i) => {
+              const submitter = detectSubmitter(resp.data);
+              return (
+                <div key={resp.id} className="bg-surface border border-border rounded-xl p-5">
+                  <div className="flex justify-between items-start mb-4 gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <span className="text-xs font-medium text-accent">#{i + 1}</span>
+                        <span
+                          className={`text-sm font-semibold truncate ${
+                            submitter.isAnonymous ? "text-muted italic" : "text-foreground"
+                          }`}
+                        >
+                          {submitter.label}
+                        </span>
                       </div>
+                      <span
+                        className="text-xs text-muted block"
+                        title={format(new Date(resp.createdAt), "PPpp")}
+                      >
+                        {formatDistanceToNow(new Date(resp.createdAt), { addSuffix: true })}
+                      </span>
                     </div>
-                  ))}
+                  </div>
+                  <div className="space-y-3">
+                    {form.fields.map((f) => (
+                      <div key={f.id}>
+                        <span className="text-xs text-muted">{f.label}</span>
+                        <div className="text-sm text-foreground mt-0.5">
+                          {renderCell(f, resp.data[f.id])}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

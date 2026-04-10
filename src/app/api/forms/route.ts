@@ -3,11 +3,30 @@ import { prisma } from "@/lib/prisma";
 import { generateForm } from "@/lib/ai";
 
 export async function GET() {
+  // Pull each form with its response count + the most recent response's
+  // timestamp so the dashboard can show "last submitted Xh ago" without
+  // a second round-trip.
   const forms = await prisma.form.findMany({
     orderBy: { createdAt: "desc" },
-    include: { _count: { select: { responses: true } } },
+    include: {
+      _count: { select: { responses: true } },
+      responses: {
+        take: 1,
+        orderBy: { createdAt: "desc" },
+        select: { createdAt: true },
+      },
+    },
   });
-  return NextResponse.json(forms);
+
+  // Flatten the responses array into a single lastResponseAt field. Strip
+  // the array itself so we don't ship a one-element list across the wire.
+  const shaped = forms.map((f: any) => ({
+    ...f,
+    lastResponseAt: f.responses[0]?.createdAt ?? null,
+    responses: undefined,
+  }));
+
+  return NextResponse.json(shaped);
 }
 
 export async function POST(req: Request) {
