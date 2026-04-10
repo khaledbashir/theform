@@ -14,11 +14,13 @@ function getClient() {
 
 export interface FormField {
   id: string;
-  type: "text" | "email" | "phone" | "textarea" | "select" | "radio" | "checkbox" | "number" | "date" | "url";
+  type: "text" | "email" | "phone" | "textarea" | "select" | "radio" | "checkbox" | "number" | "date" | "url" | "file" | "image";
   label: string;
   placeholder?: string;
   required: boolean;
   options?: string[];
+  // For file/image: optional MIME filter, e.g. "image/*" or "application/pdf,image/png"
+  accept?: string;
 }
 
 export interface GeneratedForm {
@@ -44,6 +46,9 @@ IMPORTANT RULES:
 - Use "checkbox" when multiple selections are allowed
 - Use "textarea" for open-ended responses
 - Use specific types: "email" for emails, "phone" for phones, "date" for dates, "number" for numbers, "url" for websites
+- **Use "image" when the form needs the user to upload a photo** — damage shots, venue photos, headshots, screenshots, marketing images, before/after pictures, evidence, etc. Set "accept": "image/*".
+- **Use "file" when the form needs the user to upload a non-image document** — PDFs, contracts, signed forms, specs, CADs, supporting docs. Set "accept" to a MIME list like "application/pdf" or "application/pdf,application/msword", or omit "accept" to allow any file.
+- Add image/file fields any time the form description mentions photos, attachments, uploads, scans, supporting docs, evidence, proof, before/after, contracts, or signed forms.
 - Make fields required when they're essential info, optional for nice-to-haves
 - Write clear, professional labels and helpful placeholders
 - Generate unique lowercase snake_case IDs for each field
@@ -55,11 +60,12 @@ Return ONLY valid JSON (no markdown, no code fences):
   "fields": [
     {
       "id": "field_id",
-      "type": "text|email|phone|textarea|select|radio|checkbox|number|date|url",
+      "type": "text|email|phone|textarea|select|radio|checkbox|number|date|url|file|image",
       "label": "Field Label",
       "placeholder": "Helpful hint...",
       "required": true,
-      "options": ["Option 1", "Option 2"]
+      "options": ["Option 1", "Option 2"],
+      "accept": "image/* — only for file/image fields, optional otherwise"
     }
   ]
 }`,

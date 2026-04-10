@@ -11,6 +11,30 @@ interface FormField {
   label: string;
 }
 
+// Render a single response cell — for file/image fields, show the URL as a
+// link or inline thumbnail; for everything else, fall back to the existing
+// string rendering used by the original code.
+function renderCell(field: FormField, value: any) {
+  if (value == null || value === "") return "\u2014";
+  if (Array.isArray(value)) return value.join(", ");
+  if ((field.type === "image" || field.type === "file") && typeof value === "string" && /^https?:\/\//.test(value)) {
+    if (field.type === "image") {
+      return (
+        <a href={value} target="_blank" rel="noreferrer" className="inline-block">
+          <img src={value} alt={field.label} className="max-h-16 rounded border border-border" />
+        </a>
+      );
+    }
+    const filename = value.split("/").pop()?.split("_").slice(1).join("_") || "file";
+    return (
+      <a href={value} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+        📎 {filename}
+      </a>
+    );
+  }
+  return String(value);
+}
+
 interface Response {
   id: string;
   data: Record<string, any>;
@@ -305,9 +329,7 @@ export default function FormResponses() {
                     <td className="py-3 px-4 text-muted">{i + 1}</td>
                     {form.fields.map((f) => (
                       <td key={f.id} className="py-3 px-4 text-foreground max-w-xs truncate">
-                        {Array.isArray(resp.data[f.id])
-                          ? resp.data[f.id].join(", ")
-                          : String(resp.data[f.id] || "\u2014")}
+                        {renderCell(f, resp.data[f.id])}
                       </td>
                     ))}
                     <td className="py-3 px-4 text-muted whitespace-nowrap">
@@ -332,11 +354,9 @@ export default function FormResponses() {
                   {form.fields.map((f) => (
                     <div key={f.id}>
                       <span className="text-xs text-muted">{f.label}</span>
-                      <p className="text-sm text-foreground mt-0.5">
-                        {Array.isArray(resp.data[f.id])
-                          ? resp.data[f.id].join(", ")
-                          : String(resp.data[f.id] || "\u2014")}
-                      </p>
+                      <div className="text-sm text-foreground mt-0.5">
+                        {renderCell(f, resp.data[f.id])}
+                      </div>
                     </div>
                   ))}
                 </div>

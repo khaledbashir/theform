@@ -12,6 +12,7 @@ interface FormField {
   placeholder?: string;
   required: boolean;
   options?: string[];
+  accept?: string;
 }
 
 interface Form {
@@ -440,6 +441,13 @@ export default function Dashboard() {
                               </label>
                             ))}
                           </div>
+                        ) : field.type === "file" || field.type === "image" ? (
+                          <input
+                            type="file"
+                            disabled
+                            accept={field.accept || (field.type === "image" ? "image/*" : undefined)}
+                            className="block w-full text-sm text-muted file:mr-3 file:py-2 file:px-3 file:rounded-md file:border-0 file:bg-surface-2 file:text-muted file:font-medium opacity-60"
+                          />
                         ) : (
                           <input type={field.type} placeholder={field.placeholder} readOnly />
                         )}

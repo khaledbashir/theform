@@ -10,6 +10,14 @@ interface FormField {
   placeholder?: string;
   required: boolean;
   options?: string[];
+  accept?: string;
+}
+
+interface UploadedFile {
+  url: string;
+  filename: string;
+  size: number;
+  mimeType: string;
 }
 
 interface FormData {
@@ -26,6 +34,10 @@ export default function PublicForm() {
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  // Per-field upload state for file/image fields
+  const [uploading, setUploading] = useState<Record<string, boolean>>({});
+  const [uploadInfo, setUploadInfo] = useState<Record<string, UploadedFile | null>>({});
+  const [uploadError, setUploadError] = useState<Record<string, string>>({});
 
   useEffect(() => {
     fetch(`/api/forms/${id}`)
@@ -55,6 +67,40 @@ export default function PublicForm() {
           : [...current, option],
       };
     });
+  };
+
+  const handleFileChange = async (fieldId: string, file: File | null) => {
+    if (!file) {
+      setValue(fieldId, "");
+      setUploadInfo((prev) => ({ ...prev, [fieldId]: null }));
+      setUploadError((prev) => ({ ...prev, [fieldId]: "" }));
+      return;
+    }
+    setUploading((prev) => ({ ...prev, [fieldId]: true }));
+    setUploadError((prev) => ({ ...prev, [fieldId]: "" }));
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/upload", { method: "POST", body: fd });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Upload failed" }));
+        throw new Error(err.error || `Upload failed (${res.status})`);
+      }
+      const data: UploadedFile = await res.json();
+      // Store an absolute URL so the response JSON + Twenty CRM payload
+      // contain a fully-qualified link.
+      const absoluteUrl = data.url.startsWith("http")
+        ? data.url
+        : `${window.location.origin}${data.url}`;
+      setValue(fieldId, absoluteUrl);
+      setUploadInfo((prev) => ({ ...prev, [fieldId]: { ...data, url: absoluteUrl } }));
+    } catch (e: any) {
+      setUploadError((prev) => ({ ...prev, [fieldId]: e.message || "Upload failed" }));
+      setValue(fieldId, "");
+      setUploadInfo((prev) => ({ ...prev, [fieldId]: null }));
+    } finally {
+      setUploading((prev) => ({ ...prev, [fieldId]: false }));
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -188,6 +234,43 @@ export default function PublicForm() {
                         {opt}
                       </label>
                     ))}
+                  </div>
+                ) : field.type === "file" || field.type === "image" ? (
+                  <div className="space-y-2">
+                    <input
+                      type="file"
+                      accept={field.accept || (field.type === "image" ? "image/*" : undefined)}
+                      required={field.required && !values[field.id]}
+                      disabled={uploading[field.id]}
+                      onChange={(e) => handleFileChange(field.id, e.target.files?.[0] || null)}
+                      className="block w-full text-sm text-foreground file:mr-3 file:py-2 file:px-3 file:rounded-md file:border-0 file:bg-surface-2 file:text-foreground file:font-medium file:cursor-pointer hover:file:bg-surface-2/80 disabled:opacity-50"
+                    />
+                    {uploading[field.id] && (
+                      <p className="text-xs text-muted">Uploading…</p>
+                    )}
+                    {uploadError[field.id] && (
+                      <p className="text-xs text-danger">{uploadError[field.id]}</p>
+                    )}
+                    {uploadInfo[field.id] && !uploading[field.id] && (
+                      <div className="text-xs text-muted">
+                        {field.type === "image" && uploadInfo[field.id]?.mimeType?.startsWith("image/") ? (
+                          <img
+                            src={uploadInfo[field.id]!.url}
+                            alt={uploadInfo[field.id]!.filename}
+                            className="max-h-32 rounded-md border border-border mt-1"
+                          />
+                        ) : (
+                          <a
+                            href={uploadInfo[field.id]!.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-accent hover:underline"
+                          >
+                            ✓ {uploadInfo[field.id]!.filename}
+                          </a>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <input
