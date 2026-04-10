@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import { SignaturePad } from "@/components/SignaturePad";
 
 interface FormField {
   id: string;
@@ -11,6 +12,10 @@ interface FormField {
   required: boolean;
   options?: string[];
   accept?: string;
+  min?: number;
+  max?: number;
+  step?: number;
+  unit?: string;
 }
 
 interface UploadedFile {
@@ -46,7 +51,20 @@ export default function PublicForm() {
         setForm(data);
         const initial: Record<string, any> = {};
         data.fields?.forEach((f: FormField) => {
-          initial[f.id] = f.type === "checkbox" ? [] : "";
+          if (f.type === "checkbox") {
+            initial[f.id] = [];
+          } else if (f.type === "scale") {
+            // Default the slider to its midpoint so it shows something useful
+            // before the user touches it.
+            const mn = f.min ?? 0;
+            const mx = f.max ?? 100;
+            initial[f.id] = Math.round((mn + mx) / 2);
+          } else if (f.type === "rating") {
+            // Ratings start at 0 (unrated) so requiredness can be enforced.
+            initial[f.id] = 0;
+          } else {
+            initial[f.id] = "";
+          }
         });
         setValues(initial);
       })
@@ -67,6 +85,35 @@ export default function PublicForm() {
           : [...current, option],
       };
     });
+  };
+
+  const handleSignatureChange = async (fieldId: string, dataUrl: string | null) => {
+    if (!dataUrl) {
+      setValue(fieldId, "");
+      setUploadInfo((prev) => ({ ...prev, [fieldId]: null }));
+      return;
+    }
+    setUploading((prev) => ({ ...prev, [fieldId]: true }));
+    try {
+      // Convert the canvas data URL → Blob → File so we can reuse the
+      // existing /api/upload pipeline (and the existing bind-mounted disk).
+      const blob = await (await fetch(dataUrl)).blob();
+      const file = new File([blob], `signature-${fieldId}.png`, { type: "image/png" });
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/upload", { method: "POST", body: fd });
+      if (!res.ok) throw new Error("Signature upload failed");
+      const data: UploadedFile = await res.json();
+      const absoluteUrl = data.url.startsWith("http")
+        ? data.url
+        : `${window.location.origin}${data.url}`;
+      setValue(fieldId, absoluteUrl);
+      setUploadInfo((prev) => ({ ...prev, [fieldId]: { ...data, url: absoluteUrl } }));
+    } catch (e: any) {
+      setUploadError((prev) => ({ ...prev, [fieldId]: e.message || "Signature upload failed" }));
+    } finally {
+      setUploading((prev) => ({ ...prev, [fieldId]: false }));
+    }
   };
 
   const handleFileChange = async (fieldId: string, file: File | null) => {
@@ -235,6 +282,178 @@ export default function PublicForm() {
                       </label>
                     ))}
                   </div>
+                ) : field.type === "scale" ? (
+                  // Range slider with live value display + min/max labels
+                  (() => {
+                    const mn = field.min ?? 0;
+                    const mx = field.max ?? 100;
+                    const stp = field.step ?? 1;
+                    const v = Number(values[field.id] ?? Math.round((mn + mx) / 2));
+                    return (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-muted">{mn}{field.unit || ""}</span>
+                          <span className="text-2xl font-semibold text-accent tabular-nums">
+                            {v}
+                            {field.unit && <span className="text-base text-muted ml-1">{field.unit}</span>}
+                          </span>
+                          <span className="text-xs text-muted">{mx}{field.unit || ""}</span>
+                        </div>
+                        <input
+                          type="range"
+                          min={mn}
+                          max={mx}
+                          step={stp}
+                          value={v}
+                          required={field.required}
+                          onChange={(e) => setValue(field.id, Number(e.target.value))}
+                          className="w-full accent-accent"
+                        />
+                      </div>
+                    );
+                  })()
+                ) : field.type === "rating" ? (
+                  // Star rating — clickable buttons. Default 1-5 stars, override via field.max.
+                  (() => {
+                    const mx = field.max ?? 5;
+                    const v = Number(values[field.id] || 0);
+                    return (
+                      <div className="flex items-center gap-1">
+                        {Array.from({ length: mx }).map((_, i) => {
+                          const star = i + 1;
+                          const filled = v >= star;
+                          return (
+                            <button
+                              key={star}
+                              type="button"
+                              onClick={() => setValue(field.id, star)}
+                              className={`text-2xl leading-none transition-colors ${
+                                filled ? "text-yellow-400" : "text-muted/30 hover:text-yellow-400/60"
+                              }`}
+                              aria-label={`${star} star${star !== 1 ? "s" : ""}`}
+                            >
+                              ★
+                            </button>
+                          );
+                        })}
+                        {v > 0 && (
+                          <span className="ml-2 text-xs text-muted">{v} / {mx}</span>
+                        )}
+                        {/* Hidden field to enforce required validation natively */}
+                        {field.required && (
+                          <input
+                            type="number"
+                            value={v || ""}
+                            required
+                            min={1}
+                            tabIndex={-1}
+                            onChange={() => {}}
+                            className="sr-only"
+                          />
+                        )}
+                      </div>
+                    );
+                  })()
+                ) : field.type === "signature" ? (
+                  <div className="space-y-2">
+                    <SignaturePad
+                      required={field.required}
+                      disabled={uploading[field.id]}
+                      onChange={(url) => handleSignatureChange(field.id, url)}
+                    />
+                    {uploading[field.id] && <p className="text-xs text-muted">Saving signature…</p>}
+                    {uploadError[field.id] && (
+                      <p className="text-xs text-danger">{uploadError[field.id]}</p>
+                    )}
+                  </div>
+                ) : field.type === "time" ? (
+                  <input
+                    type="time"
+                    required={field.required}
+                    value={values[field.id] || ""}
+                    onChange={(e) => setValue(field.id, e.target.value)}
+                  />
+                ) : field.type === "datetime" ? (
+                  <input
+                    type="datetime-local"
+                    required={field.required}
+                    value={values[field.id] || ""}
+                    onChange={(e) => setValue(field.id, e.target.value)}
+                  />
+                ) : field.type === "yes_no" ? (
+                  <div className="flex gap-2">
+                    {["Yes", "No"].map((opt) => {
+                      const selected = values[field.id] === opt;
+                      return (
+                        <button
+                          key={opt}
+                          type="button"
+                          onClick={() => setValue(field.id, opt)}
+                          className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                            selected
+                              ? opt === "Yes"
+                                ? "bg-success/15 border-success/40 text-success"
+                                : "bg-danger/10 border-danger/40 text-danger"
+                              : "bg-surface border-border text-muted hover:text-foreground hover:border-accent/30"
+                          }`}
+                        >
+                          {opt}
+                        </button>
+                      );
+                    })}
+                    {/* Hidden required guard */}
+                    {field.required && (
+                      <input
+                        type="text"
+                        value={values[field.id] || ""}
+                        required
+                        tabIndex={-1}
+                        onChange={() => {}}
+                        className="sr-only"
+                      />
+                    )}
+                  </div>
+                ) : field.type === "likert" ? (
+                  // 5-button agreement scale. If options provided, use them;
+                  // otherwise default to standard Likert labels.
+                  (() => {
+                    const labels = field.options && field.options.length === 5
+                      ? field.options
+                      : ["Strongly disagree", "Disagree", "Neutral", "Agree", "Strongly agree"];
+                    return (
+                      <div className="space-y-2">
+                        <div className="grid grid-cols-5 gap-1">
+                          {labels.map((opt) => {
+                            const selected = values[field.id] === opt;
+                            return (
+                              <button
+                                key={opt}
+                                type="button"
+                                onClick={() => setValue(field.id, opt)}
+                                className={`px-1 py-2 rounded-md text-[10px] leading-tight font-medium border transition-colors text-center ${
+                                  selected
+                                    ? "bg-accent/15 border-accent/50 text-accent"
+                                    : "bg-surface border-border text-muted hover:text-foreground hover:border-accent/30"
+                                }`}
+                              >
+                                {opt}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {field.required && (
+                          <input
+                            type="text"
+                            value={values[field.id] || ""}
+                            required
+                            tabIndex={-1}
+                            onChange={() => {}}
+                            className="sr-only"
+                          />
+                        )}
+                      </div>
+                    );
+                  })()
                 ) : field.type === "file" || field.type === "image" ? (
                   <div className="space-y-2">
                     <input

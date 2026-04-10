@@ -13,6 +13,10 @@ interface FormField {
   required: boolean;
   options?: string[];
   accept?: string;
+  min?: number;
+  max?: number;
+  step?: number;
+  unit?: string;
 }
 
 interface Form {
@@ -443,6 +447,45 @@ export default function Dashboard() {
                                 <input type="checkbox" disabled />
                                 {o}
                               </label>
+                            ))}
+                          </div>
+                        ) : field.type === "scale" ? (
+                          <div className="space-y-1 opacity-70">
+                            <div className="flex justify-between text-xs text-muted">
+                              <span>{(field as any).min ?? 0}</span>
+                              <span className="text-foreground font-semibold">
+                                {Math.round((((field as any).min ?? 0) + ((field as any).max ?? 100)) / 2)}
+                              </span>
+                              <span>{(field as any).max ?? 100}</span>
+                            </div>
+                            <input type="range" disabled className="w-full accent-accent" />
+                          </div>
+                        ) : field.type === "rating" ? (
+                          <div className="flex gap-1 opacity-70">
+                            {Array.from({ length: (field as any).max ?? 5 }).map((_, i) => (
+                              <span key={i} className="text-2xl text-muted/30">★</span>
+                            ))}
+                          </div>
+                        ) : field.type === "signature" ? (
+                          <div className="border border-border rounded-md bg-white h-[100px] flex items-center justify-center text-xs text-muted opacity-70">
+                            ✍️ Signature pad
+                          </div>
+                        ) : field.type === "time" || field.type === "datetime" ? (
+                          <input type={field.type === "datetime" ? "datetime-local" : "time"} readOnly />
+                        ) : field.type === "yes_no" ? (
+                          <div className="flex gap-2 opacity-70">
+                            <span className="flex-1 px-4 py-2 rounded-lg text-sm font-medium border border-border bg-surface text-muted text-center">Yes</span>
+                            <span className="flex-1 px-4 py-2 rounded-lg text-sm font-medium border border-border bg-surface text-muted text-center">No</span>
+                          </div>
+                        ) : field.type === "likert" ? (
+                          <div className="grid grid-cols-5 gap-1 opacity-70">
+                            {(field.options && field.options.length === 5
+                              ? field.options
+                              : ["Strongly disagree", "Disagree", "Neutral", "Agree", "Strongly agree"]
+                            ).map((o) => (
+                              <span key={o} className="px-1 py-2 rounded-md text-[10px] leading-tight font-medium border border-border bg-surface text-muted text-center">
+                                {o}
+                              </span>
                             ))}
                           </div>
                         ) : field.type === "file" || field.type === "image" ? (

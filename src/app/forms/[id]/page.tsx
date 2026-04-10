@@ -10,28 +10,79 @@ interface FormField {
   id: string;
   type: string;
   label: string;
+  options?: string[];
+  min?: number;
+  max?: number;
+  unit?: string;
 }
 
-// Render a single response cell — for file/image fields, show the URL as a
-// link or inline thumbnail; for everything else, fall back to the existing
-// string rendering used by the original code.
+// Render a single response cell — handles all 17 field types in the system.
+// File/image/signature URLs become thumbnails or download links; rating
+// values become stars; scale values get a unit suffix; yes/no becomes a
+// colored badge; everything else falls back to plain text.
 function renderCell(field: FormField, value: any) {
-  if (value == null || value === "") return "\u2014";
+  if (value == null || value === "" || value === 0 && field.type !== "rating" && field.type !== "scale") {
+    if (field.type !== "rating" && field.type !== "scale") return "\u2014";
+  }
   if (Array.isArray(value)) return value.join(", ");
-  if ((field.type === "image" || field.type === "file") && typeof value === "string" && /^https?:\/\//.test(value)) {
-    if (field.type === "image") {
-      return (
-        <a href={value} target="_blank" rel="noreferrer" className="inline-block">
-          <img src={value} alt={field.label} className="max-h-16 rounded border border-border" />
-        </a>
-      );
-    }
+
+  // Image / signature → inline thumbnail
+  if ((field.type === "image" || field.type === "signature") && typeof value === "string" && /^https?:\/\//.test(value)) {
+    return (
+      <a href={value} target="_blank" rel="noreferrer" className="inline-block">
+        <img src={value} alt={field.label} className="max-h-16 rounded border border-border bg-white" />
+      </a>
+    );
+  }
+  // File → 📎 download link
+  if (field.type === "file" && typeof value === "string" && /^https?:\/\//.test(value)) {
     const filename = value.split("/").pop()?.split("_").slice(1).join("_") || "file";
     return (
       <a href={value} target="_blank" rel="noreferrer" className="text-accent hover:underline">
         📎 {filename}
       </a>
     );
+  }
+  // Rating → ★★★★☆
+  if (field.type === "rating") {
+    const v = Number(value) || 0;
+    const max = field.max ?? 5;
+    return (
+      <span className="text-yellow-400 tracking-tight" title={`${v}/${max}`}>
+        {"★".repeat(v)}<span className="text-muted/30">{"★".repeat(Math.max(0, max - v))}</span>
+      </span>
+    );
+  }
+  // Scale → number + unit, color coded by position in range
+  if (field.type === "scale") {
+    const v = Number(value);
+    if (Number.isNaN(v)) return "\u2014";
+    return (
+      <span className="font-semibold text-foreground tabular-nums">
+        {v}{field.unit && <span className="text-muted text-xs ml-0.5">{field.unit}</span>}
+      </span>
+    );
+  }
+  // Yes/No → colored badge
+  if (field.type === "yes_no") {
+    const isYes = String(value).toLowerCase() === "yes";
+    return (
+      <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${isYes ? "bg-success/15 text-success" : "bg-danger/10 text-danger"}`}>
+        {value}
+      </span>
+    );
+  }
+  // Likert → highlighted text
+  if (field.type === "likert") {
+    return <span className="text-xs px-2 py-0.5 rounded-full bg-accent/10 text-accent font-medium">{value}</span>;
+  }
+  // Datetime / time → formatted
+  if (field.type === "datetime" && typeof value === "string") {
+    try {
+      return new Date(value).toLocaleString();
+    } catch {
+      return value;
+    }
   }
   return String(value);
 }
