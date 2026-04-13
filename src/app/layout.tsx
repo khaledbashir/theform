@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import Script from "next/script";
+import ThemeToggle from "@/components/ThemeToggle";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"] });
@@ -16,8 +17,11 @@ const themeInitScript = `
 (function(){
   try {
     var p = new URLSearchParams(location.search).get('theme');
+    var saved = null;
+    try { saved = localStorage.getItem('theme'); } catch(e) {}
     var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-    var dark = p ? p === 'dark' : prefersDark;
+    // Priority: URL param > saved user choice > OS preference
+    var dark = p ? p === 'dark' : (saved ? saved === 'dark' : prefersDark);
     if (dark) document.documentElement.classList.add('dark');
     else document.documentElement.classList.remove('dark');
   } catch(e) {}
@@ -31,6 +35,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
       <body className={`${inter.className} min-h-screen`}>
+        <ThemeToggle />
         {children}
         <Script id="theme-sync" strategy="afterInteractive">{`
           (function(){
