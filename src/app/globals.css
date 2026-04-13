@@ -29,6 +29,24 @@
   --shadow-md: 0 4px 16px rgba(10, 82, 239, 0.06);
 }
 
+/* Dark theme — tuned to sit alongside Twenty CRM's dark surface */
+html.dark {
+  --background: #0B0D10;
+  --foreground: #E8EAED;
+  --surface: #141820;
+  --surface-2: #1C222C;
+  --border: #2A313D;
+  --accent: #3B82F6;
+  --accent-hover: #60A5FA;
+  --accent-subtle: rgba(59, 130, 246, 0.15);
+  --accent-secondary: #03B8FF;
+  --muted: #8A94A6;
+  --success: #22C55E;
+  --danger: #EF4444;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
