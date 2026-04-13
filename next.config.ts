@@ -6,6 +6,8 @@ const FRAME_ANCESTORS = [
   "'self'",
   "https://abc-twenty.izcgmb.easypanel.host",
   "https://*.izcgmb.easypanel.host",
+  "https://crm.ancsports.net",
+  "https://*.ancsports.net",
 ].join(" ");
 
 const nextConfig: NextConfig = {
