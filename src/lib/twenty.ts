@@ -79,6 +79,142 @@ export async function createTwentyRecord(
   }
 }
 
+// --- Lookup helpers for auto-fill on form fields ---
+
+/**
+ * Email → company match. Tries the exact sending domain first, then the
+ * 2-label root (e.g. "tickets.mlb.com" → "mlb.com"). Free-mail domains are
+ * skipped so no one gets falsely tagged as a gmail-domain company.
+ */
+export async function lookupCompanyByEmail(
+  email: string
+): Promise<{ id: string; name: string; domain: string } | null> {
+  if (!KEY) return null;
+  const at = email.indexOf("@");
+  if (at < 0) return null;
+  const rawDomain = email.slice(at + 1).toLowerCase().trim();
+  if (!rawDomain) return null;
+
+  const FREE = new Set([
+    "gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com",
+    "aol.com", "proton.me", "protonmail.com", "me.com",
+  ]);
+  if (FREE.has(rawDomain)) return null;
+
+  const parts = rawDomain.split(".");
+  const candidates: string[] = [rawDomain];
+  if (parts.length > 2) candidates.push(parts.slice(-2).join("."));
+
+  try {
+    for (const d of candidates) {
+      const res = await fetch(
+        `${BASE}/rest/companies?filter=domainName.primaryLinkUrl[ilike]:"%25${d}%25"&limit=5`,
+        { headers: { Authorization: `Bearer ${KEY}` } }
+      );
+      if (!res.ok) continue;
+      const json = await res.json();
+      const hit = (json?.data?.companies || [])[0];
+      if (hit?.id) return { id: hit.id, name: hit.name || "", domain: d };
+    }
+  } catch {
+    // fall through
+  }
+  return null;
+}
+
+/**
+ * Search Twenty venues by name for a typeahead. Returns up to 10.
+ */
+export async function searchVenues(
+  q: string
+): Promise<Array<{ id: string; name: string; market: string | null }>> {
+  if (!KEY || !q || q.length < 2) return [];
+  try {
+    const res = await fetch(
+      `${BASE}/rest/venues?filter=name[ilike]:"%25${encodeURIComponent(q)}%25"&limit=10`,
+      { headers: { Authorization: `Bearer ${KEY}` } }
+    );
+    if (!res.ok) return [];
+    const json = await res.json();
+    return (json?.data?.venues || []).map((v: any) => ({
+      id: v.id, name: v.name, market: v.market || null,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Fetch a single venue's address + contact so the form can auto-fill
+ * shipping/contact fields.
+ */
+export async function lookupVenueDetails(venueId: string): Promise<{
+  id: string;
+  name: string;
+  addressStreet1?: string;
+  addressCity?: string;
+  addressState?: string;
+  addressPostcode?: string;
+  contactName?: string;
+  contactEmail?: string;
+} | null> {
+  if (!KEY) return null;
+  try {
+    const res = await fetch(`${BASE}/rest/venues/${venueId}`, {
+      headers: { Authorization: `Bearer ${KEY}` },
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    const v = json?.data?.venue;
+    if (!v?.id) return null;
+    return {
+      id: v.id,
+      name: v.name,
+      addressStreet1: v.address?.addressStreet1 || undefined,
+      addressCity: v.address?.addressCity || undefined,
+      addressState: v.address?.addressState || undefined,
+      addressPostcode: v.address?.addressPostcode || undefined,
+      contactName: v.contactName || undefined,
+      contactEmail: v.contactEmail || undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * List inventoryAsset records at a given venue — powers the board/section
+ * chip-picker on design-request forms so Alexis clicks instead of typing.
+ */
+export async function assetsAtVenue(venueId: string): Promise<Array<{
+  id: string;
+  name: string;
+  displayType: string | null;
+  screenLocation: string | null;
+  orientation: string | null;
+  resolution: string | null;
+}>> {
+  if (!KEY || !venueId) return [];
+  try {
+    const res = await fetch(
+      `${BASE}/rest/inventoryAssets?filter=assetVenueId[eq]:"${venueId}"&limit=60`,
+      { headers: { Authorization: `Bearer ${KEY}` } }
+    );
+    if (!res.ok) return [];
+    const json = await res.json();
+    return (json?.data?.inventoryAssets || []).map((a: any) => ({
+      id: a.id,
+      name: a.name || a.partName || a.assetNumber || "Untitled asset",
+      displayType: a.displayType || null,
+      screenLocation: a.screenLocation || null,
+      orientation: a.orientation || null,
+      resolution: a.resolution || null,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 /**
  * List of ANC-specific CRM targets (Twenty custom object plural endpoints)
  * shown as options in the admin UI.

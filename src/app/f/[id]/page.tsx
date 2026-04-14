@@ -16,7 +16,32 @@ interface FormField {
   max?: number;
   step?: number;
   unit?: string;
+  // Auto-fill config — optional extras that let a field trigger a lookup
+  // when the user finishes interacting with it.
+  //
+  //   autoFillClientTarget: (on "email" fields) the id of another field that
+  //     should receive the matched company name on blur. Silent-fail when no
+  //     match — never clobbers a value the user has already typed.
+  //
+  //   shippingTarget: (on "venue" fields) the id of another field that
+  //     should receive the selected venue's street address on pick.
+  //
+  //   venueFieldId: (on "venue_assets" fields) the id of the venue field
+  //     whose selection drives the asset list shown here.
+  autoFillClientTarget?: string;
+  shippingTarget?: string;
+  venueFieldId?: string;
 }
+
+type VenueSuggestion = { id: string; name: string; market: string | null };
+type AssetOption = {
+  id: string;
+  name: string;
+  displayType: string | null;
+  screenLocation: string | null;
+  orientation: string | null;
+  resolution: string | null;
+};
 
 interface UploadedFile {
   url: string;
@@ -43,6 +68,10 @@ export default function PublicForm() {
   const [uploading, setUploading] = useState<Record<string, boolean>>({});
   const [uploadInfo, setUploadInfo] = useState<Record<string, UploadedFile | null>>({});
   const [uploadError, setUploadError] = useState<Record<string, string>>({});
+  // Auto-fill state
+  const [autoFillNote, setAutoFillNote] = useState<Record<string, string>>({});
+  const [venueSuggestions, setVenueSuggestions] = useState<Record<string, VenueSuggestion[]>>({});
+  const [venueAssets, setVenueAssets] = useState<Record<string, AssetOption[]>>({});
 
   useEffect(() => {
     fetch(`/api/forms/${id}`)
@@ -84,6 +113,98 @@ export default function PublicForm() {
           ? current.filter((o: string) => o !== option)
           : [...current, option],
       };
+    });
+  };
+
+  // On email blur, try to auto-fill a target field with the matching client.
+  // Fires only if the target field is currently empty.
+  const handleEmailAutoFill = async (field: FormField, email: string) => {
+    if (!field.autoFillClientTarget || !email || !email.includes("@")) return;
+    const targetId = field.autoFillClientTarget;
+    if (String(values[targetId] || "").trim()) return;
+    try {
+      const res = await fetch(`/api/lookups/company-by-email?email=${encodeURIComponent(email)}`);
+      const data = await res.json();
+      if (data?.match?.name) {
+        setValue(targetId, data.match.name);
+        setAutoFillNote((p) => ({
+          ...p,
+          [targetId]: `Auto-filled from ${data.match.domain} — edit if wrong`,
+        }));
+      }
+    } catch { /* silent */ }
+  };
+
+  // Venue typeahead
+  const handleVenueSearch = async (fieldId: string, q: string) => {
+    setValue(fieldId, q);
+    // Clear any venueId once the user types again
+    setValue(`${fieldId}__id`, "");
+    if (q.length < 2) {
+      setVenueSuggestions((p) => ({ ...p, [fieldId]: [] }));
+      return;
+    }
+    try {
+      const res = await fetch(`/api/lookups/venues?q=${encodeURIComponent(q)}`);
+      const data = await res.json();
+      setVenueSuggestions((p) => ({ ...p, [fieldId]: data.venues || [] }));
+    } catch { /* silent */ }
+  };
+
+  // When a venue is picked, fill the visible name + hidden id, auto-fill
+  // shipping target if configured, and seed asset pickers that reference it.
+  const pickVenue = async (field: FormField, v: VenueSuggestion) => {
+    setValue(field.id, v.name);
+    setValue(`${field.id}__id`, v.id);
+    setVenueSuggestions((p) => ({ ...p, [field.id]: [] }));
+
+    // Asset list for any venue_assets field pointing at this venue
+    if (form?.fields) {
+      const assetFields = form.fields.filter(
+        (f) => f.type === "venue_assets" && f.venueFieldId === field.id
+      );
+      if (assetFields.length > 0) {
+        try {
+          const res = await fetch(`/api/lookups/assets-at-venue?venueId=${v.id}`);
+          const data = await res.json();
+          const assets: AssetOption[] = data.assets || [];
+          for (const af of assetFields) {
+            setVenueAssets((p) => ({ ...p, [af.id]: assets }));
+            // Reset selection when venue changes
+            setValue(af.id, []);
+          }
+        } catch { /* silent */ }
+      }
+    }
+
+    // Shipping auto-fill
+    if (field.shippingTarget) {
+      try {
+        const res = await fetch(`/api/lookups/venue-details?id=${v.id}`);
+        const data = await res.json();
+        const d = data?.venue;
+        if (d) {
+          const parts = [d.addressStreet1, d.addressCity, d.addressState, d.addressPostcode].filter(Boolean);
+          if (parts.length > 0 && !String(values[field.shippingTarget] || "").trim()) {
+            setValue(field.shippingTarget, parts.join(", "));
+            setAutoFillNote((p) => ({
+              ...p,
+              [field.shippingTarget!]: `Auto-filled from ${v.name} — edit if wrong`,
+            }));
+          }
+        }
+      } catch { /* silent */ }
+    }
+  };
+
+  // Asset chip toggle for venue_assets fields
+  const toggleAsset = (fieldId: string, assetId: string) => {
+    setValues((prev) => {
+      const current: string[] = prev[fieldId] || [];
+      const next = current.includes(assetId)
+        ? current.filter((x) => x !== assetId)
+        : [...current, assetId];
+      return { ...prev, [fieldId]: next };
     });
   };
 
@@ -491,6 +612,101 @@ export default function PublicForm() {
                       </div>
                     )}
                   </div>
+                ) : field.type === "venue" ? (
+                  // Venue typeahead — searches Twenty as the user types.
+                  // On pick, optionally fills a shipping-target field and
+                  // seeds any venue_assets fields that reference this one.
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder={field.placeholder || "Start typing — Fenway, Prudential…"}
+                      required={field.required}
+                      value={values[field.id] || ""}
+                      autoComplete="off"
+                      onChange={(e) => handleVenueSearch(field.id, e.target.value)}
+                    />
+                    {(venueSuggestions[field.id]?.length || 0) > 0 && (
+                      <ul className="absolute z-20 mt-1 w-full bg-surface border border-border rounded-lg shadow-lg max-h-60 overflow-auto">
+                        {venueSuggestions[field.id]!.map((v) => (
+                          <li key={v.id}>
+                            <button
+                              type="button"
+                              onClick={() => pickVenue(field, v)}
+                              className="w-full text-left px-3 py-2 text-sm hover:bg-surface-2"
+                            >
+                              <div className="font-medium text-foreground">{v.name}</div>
+                              {v.market && <div className="text-xs text-muted">{v.market}</div>}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ) : field.type === "venue_assets" ? (
+                  // Multi-select chip picker populated from Twenty inventory
+                  // for the linked venue field. Shows a hint until a venue
+                  // is picked.
+                  (() => {
+                    const options = venueAssets[field.id] || [];
+                    const selected: string[] = values[field.id] || [];
+                    if (options.length === 0) {
+                      return (
+                        <div className="text-xs text-muted italic px-3 py-2 bg-surface-2 rounded-md">
+                          Pick a venue above — the boards/sections at that venue will appear here.
+                        </div>
+                      );
+                    }
+                    return (
+                      <div>
+                        <div className="flex flex-wrap gap-2">
+                          {options.map((a) => {
+                            const isSel = selected.includes(a.id);
+                            const subtitle = [a.displayType, a.orientation, a.resolution].filter(Boolean).join(" · ");
+                            return (
+                              <button
+                                type="button"
+                                key={a.id}
+                                onClick={() => toggleAsset(field.id, a.id)}
+                                title={subtitle}
+                                className={`px-3 py-1.5 rounded-full text-xs font-medium border transition ${
+                                  isSel
+                                    ? "bg-accent text-white border-accent"
+                                    : "bg-surface text-foreground border-border hover:border-accent/50"
+                                }`}
+                              >
+                                {isSel ? "✓ " : ""}{a.name}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {selected.length > 0 && (
+                          <div className="text-xs text-muted mt-2">{selected.length} selected</div>
+                        )}
+                        {field.required && (
+                          <input
+                            type="text"
+                            value={selected.length > 0 ? "ok" : ""}
+                            required
+                            tabIndex={-1}
+                            onChange={() => {}}
+                            className="sr-only"
+                          />
+                        )}
+                      </div>
+                    );
+                  })()
+                ) : field.type === "email" && field.autoFillClientTarget ? (
+                  // Email field with auto-fill on blur — looks up the
+                  // sending domain against Twenty companies and populates
+                  // the target client field if it's still empty.
+                  <input
+                    type="email"
+                    placeholder={field.placeholder}
+                    required={field.required}
+                    value={values[field.id] || ""}
+                    onChange={(e) => setValue(field.id, e.target.value)}
+                    onBlur={(e) => handleEmailAutoFill(field, e.target.value)}
+                  />
                 ) : (
                   <input
                     type={field.type}
@@ -499,6 +715,9 @@ export default function PublicForm() {
                     value={values[field.id] || ""}
                     onChange={(e) => setValue(field.id, e.target.value)}
                   />
+                )}
+                {autoFillNote[field.id] && (
+                  <p className="text-xs text-emerald-500 mt-1">✨ {autoFillNote[field.id]}</p>
                 )}
               </div>
             ))}
