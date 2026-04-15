@@ -13,12 +13,236 @@ export function isTwentyConfigured(): boolean {
   return !!KEY;
 }
 
+type CrmFieldMapEntry =
+  | string
+  | {
+      target?: string;
+      source?: string;
+      value?: unknown;
+      resolver?: "venueId" | "companyId" | "personId" | "walkthroughResult";
+    };
+
 /**
  * Convert snake_case field IDs to camelCase for Twenty's expected naming.
  * Falls back to the original if already camelCase.
  */
 export function snakeToCamel(s: string): string {
   return s.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+}
+
+function asTrimmedString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+async function twentyJson(path: string): Promise<any | null> {
+  if (!KEY) return null;
+  try {
+    const res = await fetch(`${BASE}${path}`, {
+      headers: { Authorization: `Bearer ${KEY}` },
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function lookupVenueIdByName(name: string): Promise<string | null> {
+  const q = asTrimmedString(name);
+  if (!q) return null;
+  const json = await twentyJson(
+    `/rest/venues?filter=name[ilike]:"%25${encodeURIComponent(q)}%25"&limit=10`
+  );
+  const venues = json?.data?.venues || [];
+  const exact = venues.find((v: any) => String(v?.name || "").toLowerCase() === q.toLowerCase());
+  return exact?.id || venues[0]?.id || null;
+}
+
+async function lookupCompanyByName(name: string): Promise<string | null> {
+  const q = asTrimmedString(name);
+  if (!q) return null;
+  const json = await twentyJson(
+    `/rest/companies?filter=name[ilike]:"%25${encodeURIComponent(q)}%25"&limit=10`
+  );
+  const companies = json?.data?.companies || [];
+  const exact = companies.find((c: any) => String(c?.name || "").toLowerCase() === q.toLowerCase());
+  return exact?.id || companies[0]?.id || null;
+}
+
+async function resolveCompanyId(responseData: Record<string, unknown>): Promise<string | null> {
+  const directId =
+    asTrimmedString(responseData.client_name__id) ||
+    asTrimmedString(responseData.scheduleClient__id) ||
+    asTrimmedString(responseData.cg_client__id);
+  if (directId && /^[0-9a-f-]{36}$/i.test(directId)) return directId;
+
+  const byName =
+    (await lookupCompanyByName(
+      asTrimmedString(responseData.client_name) ||
+      asTrimmedString(responseData.scheduleClient) ||
+      asTrimmedString(responseData.cg_client)
+    )) || null;
+  if (byName) return byName;
+
+  const email =
+    asTrimmedString(responseData.requester_email) ||
+    asTrimmedString(responseData.requestor_email);
+  const match = email ? await lookupCompanyByEmail(email) : null;
+  return match?.id || null;
+}
+
+async function lookupPersonIdByName(name: string): Promise<string | null> {
+  const q = asTrimmedString(name);
+  if (!q) return null;
+  const json = await twentyJson(
+    `/rest/people?filter=searchVector[ilike]:"%25${encodeURIComponent(q)}%25"&limit=10`
+  );
+  const people = json?.data?.people || [];
+  const exact = people.find((p: any) => {
+    const full = `${p?.name?.firstName || ""} ${p?.name?.lastName || ""}`.trim();
+    return full.toLowerCase() === q.toLowerCase();
+  });
+  return exact?.id || people[0]?.id || null;
+}
+
+function toWalkthroughResult(value: unknown): string | null {
+  const raw = asTrimmedString(value).toLowerCase();
+  if (!raw) return null;
+  if (raw === "good") return "RESULT_GOOD";
+  if (raw === "partial") return "RESULT_PARTIAL";
+  if (raw === "problem detected") return "RESULT_PROBLEM";
+  return null;
+}
+
+function deriveRecordName(target: string, responseData: Record<string, unknown>): string | null {
+  if (target === "partsOrders") return asTrimmedString(responseData.venue_name) || null;
+  if (target === "designRequests") {
+    const client = asTrimmedString(responseData.client_name);
+    const venue = asTrimmedString(responseData.venue_name);
+    const deliverable = asTrimmedString(responseData.deliverable_type);
+    return [client || venue, deliverable].filter(Boolean).join(" ").trim() || null;
+  }
+  if (target === "printRequests") {
+    const client = asTrimmedString(responseData.client_name);
+    const sf = asTrimmedString(responseData.sf_number);
+    return [client, sf].filter(Boolean).join(" ").trim() || null;
+  }
+  if (target === "contentSchedules") {
+    return asTrimmedString(responseData.name) || null;
+  }
+  if (target === "cgDesignRequests") {
+    return asTrimmedString(responseData.request_title) || null;
+  }
+  if (target === "walkthroughLogs") {
+    return asTrimmedString(responseData.name) || null;
+  }
+  return null;
+}
+
+async function resolveFieldValue(
+  responseData: Record<string, unknown>,
+  sourceKey: string,
+  entry: CrmFieldMapEntry
+): Promise<{ target: string; value: unknown } | null> {
+  if (typeof entry === "string") {
+    const raw = responseData[sourceKey];
+    if (raw == null || raw === "") return null;
+    return { target: entry, value: raw };
+  }
+
+  const target = entry.target || sourceKey;
+  if (!target) return null;
+
+  let rawValue: unknown;
+  if (Object.prototype.hasOwnProperty.call(entry, "value")) {
+    rawValue = entry.value;
+  } else {
+    rawValue = responseData[entry.source || sourceKey];
+  }
+
+  if (entry.resolver === "venueId") {
+    const resolved =
+      asTrimmedString(rawValue) ||
+      asTrimmedString(responseData[`${entry.source || sourceKey}__id`]);
+    const venueId = resolved && /^[0-9a-f-]{36}$/i.test(resolved)
+      ? resolved
+      : await lookupVenueIdByName(resolved);
+    return venueId ? { target, value: venueId } : null;
+  }
+
+  if (entry.resolver === "companyId") {
+    const companyId = await resolveCompanyId(responseData);
+    return companyId ? { target, value: companyId } : null;
+  }
+
+  if (entry.resolver === "personId") {
+    const raw = asTrimmedString(rawValue);
+    const personId = /^[0-9a-f-]{36}$/i.test(raw) ? raw : await lookupPersonIdByName(raw);
+    return personId ? { target, value: personId } : null;
+  }
+
+  if (entry.resolver === "walkthroughResult") {
+    const result = toWalkthroughResult(rawValue);
+    return result ? { target, value: result } : null;
+  }
+
+  if (rawValue == null || rawValue === "") return null;
+  return { target, value: rawValue };
+}
+
+async function enrichTwentyPayload(
+  target: string,
+  payload: Record<string, unknown>,
+  responseData: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  const out = { ...payload };
+
+  if (!out.name) {
+    const derived = deriveRecordName(target, responseData);
+    if (derived) out.name = derived;
+  }
+
+  if (target === "partsOrders") {
+    out.status ||= "STATUS_REQUEST_SUBMITTED";
+    out.venueId ||= asTrimmedString(responseData.venue_name__id) || await lookupVenueIdByName(asTrimmedString(responseData.venue_name));
+  }
+
+  if (target === "designRequests") {
+    out.status ||= "STATUS_REQUEST_SUBMITTED";
+    out.designClientId ||= await resolveCompanyId(responseData);
+  }
+
+  if (target === "printRequests") {
+    out.status ||= "STATUS_NEW_JOB";
+    out.requesterEmailPrimaryEmail ||= asTrimmedString(responseData.requester_email) || undefined;
+    out.printClientId ||= await resolveCompanyId(responseData);
+  }
+
+  if (target === "contentSchedules") {
+    out.status ||= "STATUS_IN_QUEUE";
+    out.scheduleClientId ||= await resolveCompanyId(responseData);
+    out.contentTitle ||= asTrimmedString(responseData.name) || undefined;
+  }
+
+  if (target === "cgDesignRequests") {
+    out.status ||= "STATUS_REQUEST_SUBMITTED";
+    out.cgClientId ||= await resolveCompanyId(responseData);
+    out.requestTitle ||= asTrimmedString(responseData.request_title) || undefined;
+  }
+
+  if (target === "walkthroughLogs") {
+    out.walkVenueId ||= asTrimmedString(responseData.venue_name__id) || await lookupVenueIdByName(asTrimmedString(responseData.venue_name));
+    out.logTime ||= asTrimmedString(responseData.log_time) || new Date().toISOString().slice(11, 16);
+    if (responseData.result && !out.result) {
+      out.result = toWalkthroughResult(responseData.result);
+    }
+  }
+
+  Object.keys(out).forEach((key) => {
+    if (out[key] == null || out[key] === "") delete out[key];
+  });
+
+  return out;
 }
 
 /**
@@ -29,17 +253,28 @@ export function snakeToCamel(s: string): string {
  *   1. Explicit fieldMap entry (formFieldId → twentyFieldName)
  *   2. Auto-mapping via snakeToCamel(formFieldId)
  */
-export function buildTwentyPayload(
+export async function buildTwentyPayload(
+  target: string,
   responseData: Record<string, unknown>,
-  fieldMap?: Record<string, string> | null
-): Record<string, unknown> {
+  fieldMap?: Record<string, CrmFieldMapEntry> | null
+): Promise<Record<string, unknown>> {
   const out: Record<string, unknown> = {};
+
+  if (fieldMap && Object.keys(fieldMap).length > 0) {
+    for (const [sourceKey, entry] of Object.entries(fieldMap)) {
+      const resolved = await resolveFieldValue(responseData, sourceKey, entry);
+      if (!resolved) continue;
+      out[resolved.target] = resolved.value;
+    }
+    return enrichTwentyPayload(target, out, responseData);
+  }
+
   for (const [formId, rawValue] of Object.entries(responseData)) {
     if (rawValue == null || rawValue === "") continue;
-    const twentyKey = fieldMap?.[formId] || snakeToCamel(formId);
-    out[twentyKey] = rawValue;
+    out[snakeToCamel(formId)] = rawValue;
   }
-  return out;
+
+  return enrichTwentyPayload(target, out, responseData);
 }
 
 /**
@@ -67,9 +302,13 @@ export async function createTwentyRecord(
       const msg = data?.messages?.[0] || data?.error || `HTTP ${res.status}`;
       return { ok: false, error: String(msg) };
     }
-    // Twenty returns { data: { create<Target>: {...record} } }
-    const createKey = `create${target.charAt(0).toUpperCase()}${target.slice(1)}`;
-    const record = data?.data?.[createKey];
+    const singular = target.endsWith("s") ? target.slice(0, -1) : target;
+    const createKey = `create${singular.charAt(0).toUpperCase()}${singular.slice(1)}`;
+    const record =
+      data?.data?.[createKey] ||
+      data?.data?.[singular] ||
+      data?.data?.[target] ||
+      Object.values(data?.data || {}).find((value: any) => value && typeof value === "object" && "id" in value);
     if (!record?.id) {
       return { ok: false, error: "Twenty returned no record id" };
     }

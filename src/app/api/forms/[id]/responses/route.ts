@@ -25,7 +25,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   let crmResult: Record<string, unknown> | null = null;
 
   if (crmTarget && isTwentyConfigured()) {
-    const payload = buildTwentyPayload(data, crmFieldMap);
+    const payload = await buildTwentyPayload(crmTarget, data, crmFieldMap as any);
     const result = await createTwentyRecord(crmTarget, payload);
     if (result.ok) {
       crmResult = { ok: true, target: crmTarget, recordId: result.id, name: result.name };
