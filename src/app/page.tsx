@@ -1,9 +1,21 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 import { Toast, useToast } from "@/components/Toast";
+import {
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  ExternalLink,
+  Loader2,
+  MessageSquare,
+  Plus,
+  Save,
+  Trash2,
+} from "lucide-react";
 
 interface FormField {
   id: string;
@@ -135,6 +147,50 @@ const AVAILABLE_TYPES: Array<{ type: string; icon: string; label: string }> = [
   { type: "likert",    icon: "▬",   label: "Likert scale" },
 ];
 
+const DEFAULT_OPTIONS = {
+  select: ["Option 1", "Option 2"],
+  radio: ["Option 1", "Option 2"],
+  checkbox: ["Option 1", "Option 2"],
+  likert: ["Strongly disagree", "Disagree", "Neutral", "Agree", "Strongly agree"],
+};
+
+function slugifyFieldId(label: string) {
+  const slug = label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 42);
+  return `${slug || "field"}_${Date.now().toString(36)}`;
+}
+
+function fieldDefaults(type: string): FormField {
+  const meta = AVAILABLE_TYPES.find((t) => t.type === type);
+  const label = meta?.label || "New field";
+  const base: FormField = {
+    id: slugifyFieldId(label),
+    type,
+    label,
+    placeholder: type === "textarea" ? "Enter details..." : `Enter ${label.toLowerCase()}...`,
+    required: false,
+  };
+
+  if (type in DEFAULT_OPTIONS) {
+    base.options = DEFAULT_OPTIONS[type as keyof typeof DEFAULT_OPTIONS];
+  }
+  if (type === "scale") {
+    base.min = 0;
+    base.max = 10;
+    base.step = 1;
+  }
+  if (type === "rating") {
+    base.max = 5;
+  }
+  if (type === "image") {
+    base.accept = "image/*";
+  }
+  return base;
+}
+
 export default function Dashboard() {
   const [forms, setForms] = useState<Form[]>([]);
   const [prompt, setPrompt] = useState("");
@@ -150,6 +206,9 @@ export default function Dashboard() {
   // and turns the chat into a multi-turn conversation with the AI.
   const [conversing, setConversing] = useState(false);
   const [draft, setDraft] = useState<DraftForm | null>(null);
+  const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     fetch("/api/forms")
@@ -163,6 +222,16 @@ export default function Dashboard() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
+
+  useEffect(() => {
+    if (!preview?.fields?.length) {
+      setSelectedFieldId(null);
+      return;
+    }
+    if (!selectedFieldId || !preview.fields.some((field) => field.id === selectedFieldId)) {
+      setSelectedFieldId(preview.fields[0].id);
+    }
+  }, [preview, selectedFieldId]);
 
   // Reset chat + draft + conversational mode (e.g. when switching presets)
   const resetSession = () => {
@@ -266,6 +335,8 @@ export default function Dashboard() {
           fields: result.fields,
         });
         setPreview(saved);
+        setSelectedFieldId(result.fields[0]?.id || null);
+        setDirty(false);
         setMessages((prev) => [
           ...prev,
           {
@@ -277,7 +348,7 @@ export default function Dashboard() {
           },
         ]);
       }
-    } catch (e) {
+    } catch {
       setMessages((prev) => [
         ...prev,
         { role: "ai", content: "Sorry, that didn't work. Try rephrasing?" },
@@ -311,6 +382,8 @@ export default function Dashboard() {
       });
       const form = await res.json();
       setPreview(form);
+      setSelectedFieldId(form.fields?.[0]?.id || null);
+      setDirty(false);
       const crmNote = form.crmTarget
         ? ` Connected to CRM → ${form.crmTarget}`
         : "";
@@ -324,7 +397,7 @@ export default function Dashboard() {
       ]);
       setForms((prev) => [{ ...form, _count: { responses: 0 } }, ...prev]);
       showToast(crmTarget ? "Form created + connected to CRM" : "Form created");
-    } catch (e) {
+    } catch {
       setMessages((prev) => [
         ...prev,
         { role: "ai", content: "Failed to create form. Check your API key." },
@@ -339,7 +412,11 @@ export default function Dashboard() {
     if (!confirm("Delete this form and all its responses?")) return;
     await fetch(`/api/forms/${id}`, { method: "DELETE" });
     setForms((prev) => prev.filter((f) => f.id !== id));
-    if (preview?.id === id) setPreview(null);
+    if (preview?.id === id) {
+      setPreview(null);
+      setSelectedFieldId(null);
+      setDirty(false);
+    }
     showToast("Form deleted");
   };
 
@@ -352,18 +429,163 @@ export default function Dashboard() {
     [showToast]
   );
 
+  const patchPreview = useCallback((updater: (form: Form) => Form) => {
+    setDirty(true);
+    setPreview((current) => {
+      if (!current) return current;
+      return updater(current);
+    });
+  }, []);
+
+  const updatePreviewMeta = (patch: Partial<Pick<Form, "title" | "description">>) => {
+    patchPreview((form) => ({ ...form, ...patch }));
+  };
+
+  const updatePreviewField = (fieldId: string, patch: Partial<FormField>) => {
+    patchPreview((form) => ({
+      ...form,
+      fields: (form.fields || []).map((field) =>
+        field.id === fieldId ? { ...field, ...patch } : field
+      ),
+    }));
+  };
+
+  const addPreviewField = (type: string, index?: number) => {
+    const field = fieldDefaults(type);
+    patchPreview((form) => {
+      const fields = [...(form.fields || [])];
+      const insertAt = index === undefined ? fields.length : index;
+      fields.splice(insertAt, 0, field);
+      return { ...form, fields };
+    });
+    setSelectedFieldId(field.id);
+  };
+
+  const duplicatePreviewField = (field: FormField) => {
+    const clone = {
+      ...field,
+      id: slugifyFieldId(field.label),
+      label: `${field.label} copy`,
+      options: field.options ? [...field.options] : undefined,
+    };
+    patchPreview((form) => {
+      const fields = [...(form.fields || [])];
+      const index = fields.findIndex((candidate) => candidate.id === field.id);
+      fields.splice(index >= 0 ? index + 1 : fields.length, 0, clone);
+      return { ...form, fields };
+    });
+    setSelectedFieldId(clone.id);
+  };
+
+  const removePreviewField = (fieldId: string) => {
+    patchPreview((form) => {
+      const fields = (form.fields || []).filter((field) => field.id !== fieldId);
+      return { ...form, fields };
+    });
+    setSelectedFieldId((current) => (current === fieldId ? null : current));
+  };
+
+  const movePreviewField = (fieldId: string, direction: -1 | 1) => {
+    patchPreview((form) => {
+      const fields = [...(form.fields || [])];
+      const index = fields.findIndex((field) => field.id === fieldId);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= fields.length) return form;
+      const [field] = fields.splice(index, 1);
+      fields.splice(nextIndex, 0, field);
+      return { ...form, fields };
+    });
+  };
+
+  const updateOptions = (field: FormField, value: string) => {
+    updatePreviewField(field.id, {
+      options: value
+        .split("\n")
+        .map((option) => option.trim())
+        .filter(Boolean),
+    });
+  };
+
+  const startBlankBuilder = async () => {
+    resetSession();
+    setLoading(true);
+    try {
+      const initial = {
+        title: "Untitled ANC Form",
+        description: "Collect the details your team needs.",
+        fields: [fieldDefaults("text")],
+      };
+      const res = await fetch("/api/forms/from-converse", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(initial),
+      });
+      const form = await res.json();
+      setForms((prev) => [{ ...form, _count: { responses: 0 } }, ...prev]);
+      setPreview(form);
+      setSelectedFieldId(form.fields?.[0]?.id || null);
+      setDirty(false);
+      showToast("Blank builder started");
+    } catch {
+      showToast("Could not start builder");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const savePreview = async () => {
+    if (!preview) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/forms/${preview.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: preview.title,
+          description: preview.description,
+          fields: preview.fields || [],
+        }),
+      });
+      const saved = await res.json();
+      if (!res.ok) throw new Error(saved.error || "Save failed");
+      setForms((prev) =>
+        prev.map((form) =>
+          form.id === saved.id
+            ? {
+                ...form,
+                title: saved.title,
+                description: saved.description,
+                fields: saved.fields,
+              }
+            : form
+        )
+      );
+      setPreview((current) => (current ? { ...current, ...saved } : current));
+      setDirty(false);
+      showToast("Builder changes saved");
+    } catch (error: unknown) {
+      showToast(error instanceof Error ? error.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const totalResponses = forms.reduce((sum, f) => sum + f._count.responses, 0);
   const hasHistory = messages.length > 0;
+  const selectedField = preview?.fields?.find((field) => field.id === selectedFieldId) || null;
 
   return (
     <div className="h-screen flex flex-col">
       {/* Header */}
       <header className="border-b border-border bg-surface px-6 py-3 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
-          <img
+          <Image
             src="/anc-logo.png"
             alt="ANC Sports"
+            width={128}
+            height={28}
             className="h-7 w-auto"
+            style={{ width: "auto" }}
           />
           <span className="h-5 w-px bg-border" />
           <h1 className="text-lg font-semibold text-foreground">Forms</h1>
@@ -399,171 +621,135 @@ export default function Dashboard() {
       </header>
 
       {tab === "create" ? (
-        <div className="flex-1 flex overflow-hidden">
-          {/* Left: Chat-style prompt */}
-          <div className="w-1/2 border-r border-border flex flex-col">
-            {/* Chat messages area */}
-            <div className="flex-1 overflow-y-auto">
-              {!hasHistory ? (
-                /* Empty state with presets */
-                <div className="p-6 h-full flex flex-col">
-                  <div className="flex-1 flex flex-col justify-center max-w-md mx-auto w-full">
-                    <h2 className="text-xl font-semibold text-foreground mb-1">What form do you need?</h2>
-                    <p className="text-sm text-muted mb-6">
-                      Describe it in your own words, or start from a preset.
-                    </p>
-                    <div className="grid grid-cols-2 gap-2">
-                      {PRESETS.map((p: any) => (
-                        <button
-                          key={p.label}
-                          onClick={() =>
-                            p.converse
-                              ? startCustomConversation()
-                              : createForm(p.prompt, p.crmTarget)
-                          }
-                          disabled={loading}
-                          className={`text-left p-3 rounded-xl bg-surface border transition-all group disabled:opacity-50 ${
-                            p.converse
-                              ? "border-accent/40 hover:border-accent hover:bg-accent/5"
-                              : "border-border hover:border-accent/40 hover:bg-accent/5"
-                          }`}
-                        >
-                          <div className="flex items-start justify-between mb-1">
-                            <span className="text-lg block">{p.icon}</span>
-                            {p.converse ? (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-accent text-white font-bold">
-                                CHAT
-                              </span>
-                            ) : p.crmTarget ? (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-accent/10 text-accent font-medium">
-                                → CRM
-                              </span>
-                            ) : null}
-                          </div>
-                          <span className="text-sm font-medium text-foreground group-hover:text-accent transition-colors block">
-                            {p.label}
+        <div className="flex-1 flex overflow-hidden bg-background">
+          <aside className="w-[310px] shrink-0 border-r border-border bg-surface flex flex-col">
+            <div className="p-4 border-b border-border">
+              <button
+                onClick={startBlankBuilder}
+                disabled={loading}
+                className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-50"
+              >
+                {loading && !preview ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                Blank builder
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-5">
+              <section>
+                <h2 className="text-xs font-semibold uppercase tracking-wide text-muted mb-2">AI starter</h2>
+                <div className="grid grid-cols-1 gap-2">
+                  {PRESETS.map((p) => (
+                    <button
+                      key={p.label}
+                      onClick={() =>
+                        p.converse ? startCustomConversation() : createForm(p.prompt, p.crmTarget)
+                      }
+                      disabled={loading}
+                      className={`text-left rounded-lg border px-3 py-2 transition-colors disabled:opacity-50 ${
+                        p.converse
+                          ? "border-accent/40 bg-accent/5 hover:border-accent"
+                          : "border-border bg-surface hover:border-accent/40 hover:bg-accent/5"
+                      }`}
+                    >
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="min-w-0 truncate text-sm font-medium text-foreground">
+                          <span className="mr-2">{p.icon}</span>
+                          {p.label}
+                        </span>
+                        {p.converse ? (
+                          <MessageSquare className="h-3.5 w-3.5 text-accent" />
+                        ) : p.crmTarget ? (
+                          <span className="shrink-0 rounded-full bg-accent/10 px-1.5 py-0.5 text-[9px] font-semibold text-accent">
+                            CRM
                           </span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+                        ) : null}
+                      </span>
+                    </button>
+                  ))}
                 </div>
-              ) : (
-                /* Chat history */
-                <div className="p-4 space-y-4">
-                  {messages.map((msg, i) => (
-                    <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+              </section>
+
+              <section>
+                <h2 className="text-xs font-semibold uppercase tracking-wide text-muted mb-2">Field palette</h2>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {AVAILABLE_TYPES.map((fieldType) => (
+                    <button
+                      key={fieldType.type}
+                      onClick={() => addPreviewField(fieldType.type)}
+                      disabled={!preview}
+                      className="min-h-9 rounded-md border border-border bg-surface-2 px-2 text-left text-[11px] text-muted hover:border-accent/40 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                      title={preview ? `Add ${fieldType.label}` : "Start or generate a form first"}
+                    >
+                      <span className="mr-1 font-semibold text-foreground/70">{fieldType.icon}</span>
+                      {fieldType.label}
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              {hasHistory && (
+                <section>
+                  <h2 className="text-xs font-semibold uppercase tracking-wide text-muted mb-2">Chat</h2>
+                  <div className="max-h-52 space-y-2 overflow-y-auto pr-1">
+                    {messages.map((msg, i) => (
                       <div
-                        className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm ${
+                        key={i}
+                        className={`rounded-lg px-3 py-2 text-xs leading-relaxed ${
                           msg.role === "user"
-                            ? "bg-accent text-white rounded-br-md"
-                            : "bg-surface border border-border text-foreground rounded-bl-md"
+                            ? "bg-accent text-white"
+                            : "border border-border bg-surface-2 text-foreground"
                         }`}
                       >
-                        <p>{msg.content}</p>
+                        {msg.content}
                         {msg.form && (
-                          <div className="flex gap-2 mt-2 pt-2 border-t border-white/10">
+                          <div className="mt-2 flex gap-1">
                             <button
                               onClick={() => copyLink(msg.form!.id)}
-                              className={`text-xs px-2 py-1 rounded-md transition-colors ${
-                                msg.role === "user"
-                                  ? "bg-white/10 hover:bg-white/20 text-white/90"
-                                  : "bg-accent/10 text-accent hover:bg-accent/20"
-                              }`}
+                              className="inline-flex items-center gap-1 rounded-md bg-white/10 px-2 py-1"
+                              title="Copy public form link"
                             >
-                              Copy Link
+                              <Copy className="h-3 w-3" />
+                              Copy
                             </button>
-                            <Link
-                              href={`/f/${msg.form.id}`}
-                              target="_blank"
-                              className={`text-xs px-2 py-1 rounded-md transition-colors ${
-                                msg.role === "user"
-                                  ? "bg-white/10 hover:bg-white/20 text-white/90"
-                                  : "bg-accent/10 text-accent hover:bg-accent/20"
-                              }`}
-                            >
-                              Open Form
-                            </Link>
                             <button
-                              onClick={() => setPreview(msg.form!)}
-                              className={`text-xs px-2 py-1 rounded-md transition-colors ${
-                                msg.role === "user"
-                                  ? "bg-white/10 hover:bg-white/20 text-white/90"
-                                  : "bg-accent/10 text-accent hover:bg-accent/20"
-                              }`}
+                              onClick={() => {
+                                setPreview(msg.form!);
+                                setDirty(false);
+                              }}
+                              className="rounded-md bg-white/10 px-2 py-1"
                             >
-                              Preview
+                              Edit
                             </button>
                           </div>
                         )}
                       </div>
-                    </div>
-                  ))}
-                  {loading && (
-                    <div className="flex justify-start">
-                      <div className="bg-surface border border-border rounded-2xl rounded-bl-md px-4 py-3">
-                        <div className="flex gap-1.5">
-                          <div className="w-2 h-2 rounded-full bg-accent/40 animate-bounce" style={{ animationDelay: "0ms" }} />
-                          <div className="w-2 h-2 rounded-full bg-accent/40 animate-bounce" style={{ animationDelay: "150ms" }} />
-                          <div className="w-2 h-2 rounded-full bg-accent/40 animate-bounce" style={{ animationDelay: "300ms" }} />
-                        </div>
+                    ))}
+                    {loading && (
+                      <div className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs text-muted">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" />
+                        Building
                       </div>
-                    </div>
-                  )}
-                  <div ref={chatEndRef} />
-                </div>
+                    )}
+                    <div ref={chatEndRef} />
+                  </div>
+                </section>
               )}
             </div>
 
-            {/* Input bar */}
-            <div className="p-4 border-t border-border bg-surface">
-              {hasHistory && !conversing && (
-                <div className="flex gap-1.5 mb-3 overflow-x-auto pb-1 scrollbar-hide">
-                  {PRESETS.slice(0, 4).map((p) => (
-                    <button
-                      key={p.label}
-                      onClick={() => setPrompt(p.prompt)}
-                      disabled={loading}
-                      className="shrink-0 text-xs px-3 py-1.5 rounded-full bg-surface border border-border text-muted hover:text-foreground hover:border-accent/30 transition-colors disabled:opacity-50"
-                    >
-                      {p.icon} {p.label}
-                    </button>
-                  ))}
-                </div>
-              )}
+            <div className="border-t border-border bg-surface p-4">
               {conversing && (
-                <div className="flex items-center justify-between mb-2 text-xs">
-                  <span className="text-accent font-medium flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
-                    Custom chat — AI will ask follow-ups
-                  </span>
-                  <button
-                    onClick={resetSession}
-                    className="text-muted hover:text-foreground"
-                  >
-                    Exit chat
+                <div className="mb-2 flex items-center justify-between text-xs">
+                  <span className="font-medium text-accent">Custom chat active</span>
+                  <button onClick={resetSession} className="text-muted hover:text-foreground">
+                    Exit
                   </button>
                 </div>
               )}
-              {/* Field type hint chips — subtle row showing what's available */}
-              <div className="flex gap-1 mb-2 overflow-x-auto pb-1 scrollbar-hide" title="Field types the AI can use">
-                {AVAILABLE_TYPES.map((t) => (
-                  <span
-                    key={t.type}
-                    className="shrink-0 inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-surface-2 border border-border text-muted"
-                    title={t.type}
-                  >
-                    <span className="text-foreground/70">{t.icon}</span>
-                    {t.label}
-                  </span>
-                ))}
-              </div>
               <div className="flex gap-2">
                 <textarea
                   ref={inputRef}
-                  className="flex-1 bg-surface border border-border rounded-xl px-4 py-3 text-foreground placeholder-muted focus:ring-2 focus:ring-accent focus:border-transparent resize-none text-sm"
-                  rows={2}
-                  placeholder={hasHistory ? "Describe another form..." : "Describe what you need..."}
+                  className="min-h-20 flex-1 resize-none rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted focus:border-accent focus:ring-2 focus:ring-accent-subtle"
+                  placeholder={conversing ? "Reply to the AI..." : "Ask AI to build or revise a form..."}
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
                   onKeyDown={(e) => {
@@ -576,169 +762,404 @@ export default function Dashboard() {
                 <button
                   onClick={() => createForm()}
                   disabled={loading || !prompt.trim()}
-                  className="self-end bg-accent text-white p-3 rounded-xl hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  className="self-end rounded-lg bg-accent p-2.5 text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-40"
+                  title="Send to AI"
                 >
-                  {loading ? (
-                    <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                  ) : (
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
-                    </svg>
-                  )}
+                  {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : <MessageSquare className="h-5 w-5" />}
                 </button>
               </div>
             </div>
-          </div>
+          </aside>
 
-          {/* Right: Live Preview */}
-          <div className="w-1/2 flex flex-col bg-surface/50 overflow-y-auto">
-            {loading && !preview ? (
-              <div className="flex-1 flex items-center justify-center">
-                <div className="text-center">
-                  <div className="relative w-12 h-12 mx-auto mb-4">
-                    <div className="absolute inset-0 border-2 border-accent/20 rounded-full" />
-                    <div className="absolute inset-0 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-                  </div>
-                  <p className="text-foreground text-sm font-medium mb-1">Building your form...</p>
-                  <p className="text-muted text-xs">This usually takes a few seconds</p>
-                </div>
-              </div>
-            ) : preview ? (
-              <div className="p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-success" />
-                    <h2 className="text-sm font-medium text-foreground">Form Ready</h2>
-                    <span className="text-xs text-muted">{preview.fields?.length || 0} fields</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => copyLink(preview.id)}
-                      className="text-xs px-3 py-1.5 rounded-lg bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
-                    >
-                      Copy Link
-                    </button>
-                    <Link
-                      href={`/f/${preview.id}`}
-                      target="_blank"
-                      className="text-xs px-3 py-1.5 rounded-lg bg-accent text-white hover:bg-accent-hover transition-colors"
-                    >
-                      Open Form
-                    </Link>
+          <main className="flex-1 overflow-y-auto">
+            <div className="mx-auto max-w-3xl px-8 py-6">
+              {loading && !preview ? (
+                <div className="flex min-h-[70vh] items-center justify-center text-center">
+                  <div>
+                    <Loader2 className="mx-auto mb-4 h-10 w-10 animate-spin text-accent" />
+                    <p className="mb-1 text-sm font-medium text-foreground">Building your form</p>
+                    <p className="text-xs text-muted">The builder opens as soon as the form is ready.</p>
                   </div>
                 </div>
-                <div className="bg-surface border border-border rounded-xl p-6">
-                  <h3 className="text-xl font-semibold text-foreground mb-1">{preview.title}</h3>
-                  {preview.description && <p className="text-sm text-muted mb-6">{preview.description}</p>}
-                  <div className="space-y-4">
-                    {preview.fields?.map((field) => (
-                      <div key={field.id} className="form-field">
-                        <label className="block text-sm font-medium text-foreground mb-1.5">
-                          {field.label}
-                          {field.required && <span className="text-danger ml-1">*</span>}
-                        </label>
-                        {field.type === "textarea" ? (
-                          <textarea placeholder={field.placeholder} rows={3} readOnly />
-                        ) : field.type === "select" ? (
-                          <select disabled>
-                            <option>Select...</option>
-                            {field.options?.map((o) => (
-                              <option key={o}>{o}</option>
-                            ))}
-                          </select>
-                        ) : field.type === "radio" ? (
-                          <div className="space-y-2">
-                            {field.options?.map((o) => (
-                              <label key={o} className="radio-option">
-                                <input type="radio" name={field.id} disabled />
-                                {o}
-                              </label>
-                            ))}
-                          </div>
-                        ) : field.type === "checkbox" ? (
-                          <div className="space-y-2">
-                            {field.options?.map((o) => (
-                              <label key={o} className="checkbox-option">
-                                <input type="checkbox" disabled />
-                                {o}
-                              </label>
-                            ))}
-                          </div>
-                        ) : field.type === "scale" ? (
-                          <div className="space-y-1 opacity-70">
-                            <div className="flex justify-between text-xs text-muted">
-                              <span>{(field as any).min ?? 0}</span>
-                              <span className="text-foreground font-semibold">
-                                {Math.round((((field as any).min ?? 0) + ((field as any).max ?? 100)) / 2)}
-                              </span>
-                              <span>{(field as any).max ?? 100}</span>
-                            </div>
-                            <input type="range" disabled className="w-full accent-accent" />
-                          </div>
-                        ) : field.type === "rating" ? (
-                          <div className="flex gap-1 opacity-70">
-                            {Array.from({ length: (field as any).max ?? 5 }).map((_, i) => (
-                              <span key={i} className="text-2xl text-muted/30">★</span>
-                            ))}
-                          </div>
-                        ) : field.type === "signature" ? (
-                          <div className="border border-border rounded-md bg-white h-[100px] flex items-center justify-center text-xs text-muted opacity-70">
-                            ✍️ Signature pad
-                          </div>
-                        ) : field.type === "time" || field.type === "datetime" ? (
-                          <input type={field.type === "datetime" ? "datetime-local" : "time"} readOnly />
-                        ) : field.type === "yes_no" ? (
-                          <div className="flex gap-2 opacity-70">
-                            <span className="flex-1 px-4 py-2 rounded-lg text-sm font-medium border border-border bg-surface text-muted text-center">Yes</span>
-                            <span className="flex-1 px-4 py-2 rounded-lg text-sm font-medium border border-border bg-surface text-muted text-center">No</span>
-                          </div>
-                        ) : field.type === "likert" ? (
-                          <div className="grid grid-cols-5 gap-1 opacity-70">
-                            {(field.options && field.options.length === 5
-                              ? field.options
-                              : ["Strongly disagree", "Disagree", "Neutral", "Agree", "Strongly agree"]
-                            ).map((o) => (
-                              <span key={o} className="px-1 py-2 rounded-md text-[10px] leading-tight font-medium border border-border bg-surface text-muted text-center">
-                                {o}
-                              </span>
-                            ))}
-                          </div>
-                        ) : field.type === "file" || field.type === "image" ? (
-                          <input
-                            type="file"
-                            disabled
-                            accept={field.accept || (field.type === "image" ? "image/*" : undefined)}
-                            className="block w-full text-sm text-muted file:mr-3 file:py-2 file:px-3 file:rounded-md file:border-0 file:bg-surface-2 file:text-muted file:font-medium opacity-60"
-                          />
-                        ) : (
-                          <input type={field.type} placeholder={field.placeholder} readOnly />
-                        )}
+              ) : preview ? (
+                <div>
+                  <div className="sticky top-0 z-10 -mx-8 mb-5 border-b border-border bg-background/95 px-8 py-3 backdrop-blur">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className={`h-2 w-2 rounded-full ${dirty ? "bg-danger" : "bg-success"}`} />
+                        <span className="truncate text-sm font-medium text-foreground">
+                          {dirty ? "Unsaved edits" : "Saved"}
+                        </span>
+                        <span className="text-xs text-muted">{preview.fields?.length || 0} fields</span>
                       </div>
-                    ))}
+                      <div className="flex shrink-0 items-center gap-2">
+                        <button
+                          onClick={() => copyLink(preview.id)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-muted hover:text-foreground"
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                          Copy
+                        </button>
+                        <Link
+                          href={`/f/${preview.id}`}
+                          target="_blank"
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-muted hover:text-foreground"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                          Open
+                        </Link>
+                        <button
+                          onClick={savePreview}
+                          disabled={saving || !dirty}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-45"
+                        >
+                          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                          Save
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                  <button disabled className="w-full mt-6 bg-accent text-white py-2.5 rounded-lg font-medium opacity-60 text-sm">
-                    Submit
+
+                  <div className="rounded-lg border border-border bg-surface p-6 shadow-sm">
+                    <input
+                      value={preview.title}
+                      onChange={(e) => updatePreviewMeta({ title: e.target.value })}
+                      className="w-full rounded-md border border-transparent bg-transparent px-1 py-1 text-2xl font-semibold text-foreground outline-none hover:border-border focus:border-accent focus:bg-surface-2"
+                      placeholder="Form title"
+                    />
+                    <textarea
+                      value={preview.description || ""}
+                      onChange={(e) => updatePreviewMeta({ description: e.target.value })}
+                      className="mt-1 min-h-11 w-full resize-none rounded-md border border-transparent bg-transparent px-1 py-1 text-sm text-muted outline-none hover:border-border focus:border-accent focus:bg-surface-2"
+                      placeholder="Short description"
+                    />
+
+                    <div className="mt-5 space-y-3">
+                      {(preview.fields || []).map((field, index) => (
+                        <div
+                          key={field.id}
+                          onClick={() => setSelectedFieldId(field.id)}
+                          className={`group rounded-lg border p-4 transition-colors ${
+                            selectedFieldId === field.id
+                              ? "border-accent bg-accent/5"
+                              : "border-border bg-surface hover:border-accent/40"
+                          }`}
+                        >
+                          <div className="mb-2 flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <input
+                                value={field.label}
+                                onChange={(e) => updatePreviewField(field.id, { label: e.target.value })}
+                                className="w-full rounded-md border border-transparent bg-transparent px-1 py-0.5 text-sm font-medium text-foreground outline-none hover:border-border focus:border-accent focus:bg-surface"
+                              />
+                              {field.required && <span className="ml-1 text-danger">*</span>}
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  movePreviewField(field.id, -1);
+                                }}
+                                disabled={index === 0}
+                                className="rounded-md border border-border bg-surface p-1 text-muted hover:text-foreground disabled:opacity-35"
+                                title="Move up"
+                              >
+                                <ChevronUp className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  movePreviewField(field.id, 1);
+                                }}
+                                disabled={index === (preview.fields?.length || 0) - 1}
+                                className="rounded-md border border-border bg-surface p-1 text-muted hover:text-foreground disabled:opacity-35"
+                                title="Move down"
+                              >
+                                <ChevronDown className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  duplicatePreviewField(field);
+                                }}
+                                className="rounded-md border border-border bg-surface p-1 text-muted hover:text-foreground"
+                                title="Duplicate"
+                              >
+                                <Copy className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  removePreviewField(field.id);
+                                }}
+                                className="rounded-md border border-border bg-surface p-1 text-danger/70 hover:text-danger"
+                                title="Delete"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="form-field pointer-events-none">
+                            {field.type === "textarea" ? (
+                              <textarea placeholder={field.placeholder} rows={3} readOnly />
+                            ) : field.type === "select" ? (
+                              <select disabled>
+                                <option>Select...</option>
+                                {field.options?.map((o) => (
+                                  <option key={o}>{o}</option>
+                                ))}
+                              </select>
+                            ) : field.type === "radio" ? (
+                              <div className="space-y-2">
+                                {field.options?.map((o) => (
+                                  <label key={o} className="radio-option">
+                                    <input type="radio" name={field.id} disabled />
+                                    {o}
+                                  </label>
+                                ))}
+                              </div>
+                            ) : field.type === "checkbox" ? (
+                              <div className="space-y-2">
+                                {field.options?.map((o) => (
+                                  <label key={o} className="checkbox-option">
+                                    <input type="checkbox" disabled />
+                                    {o}
+                                  </label>
+                                ))}
+                              </div>
+                            ) : field.type === "scale" ? (
+                              <div className="space-y-1 opacity-70">
+                                <div className="flex justify-between text-xs text-muted">
+                                  <span>{field.min ?? 0}</span>
+                                  <span className="font-semibold text-foreground">
+                                    {Math.round(((field.min ?? 0) + (field.max ?? 100)) / 2)}
+                                  </span>
+                                  <span>{field.max ?? 100}</span>
+                                </div>
+                                <input type="range" disabled className="w-full accent-accent" />
+                              </div>
+                            ) : field.type === "rating" ? (
+                              <div className="flex gap-1 opacity-70">
+                                {Array.from({ length: field.max ?? 5 }).map((_, i) => (
+                                  <span key={i} className="text-2xl text-muted/30">★</span>
+                                ))}
+                              </div>
+                            ) : field.type === "signature" ? (
+                              <div className="flex h-[100px] items-center justify-center rounded-md border border-border bg-white text-xs text-muted opacity-70">
+                                Signature pad
+                              </div>
+                            ) : field.type === "time" || field.type === "datetime" ? (
+                              <input type={field.type === "datetime" ? "datetime-local" : "time"} readOnly />
+                            ) : field.type === "yes_no" ? (
+                              <div className="flex gap-2 opacity-70">
+                                <span className="flex-1 rounded-lg border border-border bg-surface px-4 py-2 text-center text-sm font-medium text-muted">Yes</span>
+                                <span className="flex-1 rounded-lg border border-border bg-surface px-4 py-2 text-center text-sm font-medium text-muted">No</span>
+                              </div>
+                            ) : field.type === "likert" ? (
+                              <div className="grid grid-cols-5 gap-1 opacity-70">
+                                {(field.options && field.options.length === 5
+                                  ? field.options
+                                  : DEFAULT_OPTIONS.likert
+                                ).map((o) => (
+                                  <span key={o} className="rounded-md border border-border bg-surface px-1 py-2 text-center text-[10px] font-medium leading-tight text-muted">
+                                    {o}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : field.type === "file" || field.type === "image" ? (
+                              <input
+                                type="file"
+                                disabled
+                                accept={field.accept || (field.type === "image" ? "image/*" : undefined)}
+                                className="block w-full text-sm text-muted file:mr-3 file:rounded-md file:border-0 file:bg-surface-2 file:px-3 file:py-2 file:font-medium file:text-muted opacity-60"
+                              />
+                            ) : (
+                              <input
+                                type={field.type === "phone" ? "tel" : field.type}
+                                placeholder={field.placeholder}
+                                readOnly
+                              />
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <button
+                      onClick={() => addPreviewField("text")}
+                      className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border py-3 text-sm font-medium text-muted hover:border-accent/40 hover:text-foreground"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Add field
+                    </button>
+                    <button disabled className="mt-4 w-full rounded-lg bg-accent py-2.5 text-sm font-medium text-white opacity-60">
+                      Submit
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex min-h-[70vh] items-center justify-center text-center">
+                  <div className="max-w-sm">
+                    <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-lg border border-border bg-surface">
+                      <Plus className="h-7 w-7 text-muted" />
+                    </div>
+                    <p className="mb-1 text-sm font-medium text-foreground">Start with a blank form or an AI preset</p>
+                    <p className="text-xs text-muted">Once a form exists, every field becomes editable right on the canvas.</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </main>
+
+          <aside className="w-[330px] shrink-0 overflow-y-auto border-l border-border bg-surface">
+            <div className="sticky top-0 border-b border-border bg-surface p-4">
+              <h2 className="text-sm font-semibold text-foreground">Inspector</h2>
+              <p className="mt-1 text-xs text-muted">
+                {selectedField ? "Fine-tune the selected field." : "Select a field on the canvas."}
+              </p>
+            </div>
+
+            {selectedField ? (
+              <div className="space-y-4 p-4">
+                <label className="block text-xs font-medium text-muted">
+                  Label
+                  <input
+                    value={selectedField.label}
+                    onChange={(e) => updatePreviewField(selectedField.id, { label: e.target.value })}
+                    className="mt-1 w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
+                  />
+                </label>
+                <label className="block text-xs font-medium text-muted">
+                  Field ID
+                  <input
+                    value={selectedField.id}
+                    onChange={(e) => updatePreviewField(selectedField.id, { id: e.target.value })}
+                    className="mt-1 w-full rounded-lg border border-border bg-surface-2 px-3 py-2 font-mono text-xs text-foreground outline-none focus:border-accent"
+                  />
+                </label>
+                <label className="block text-xs font-medium text-muted">
+                  Type
+                  <select
+                    value={selectedField.type}
+                    onChange={(e) => {
+                      const next = fieldDefaults(e.target.value);
+                      updatePreviewField(selectedField.id, {
+                        type: e.target.value,
+                        options: next.options,
+                        min: next.min,
+                        max: next.max,
+                        step: next.step,
+                        accept: next.accept,
+                      });
+                    }}
+                    className="mt-1 w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
+                  >
+                    {AVAILABLE_TYPES.map((type) => (
+                      <option key={type.type} value={type.type}>
+                        {type.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block text-xs font-medium text-muted">
+                  Placeholder
+                  <input
+                    value={selectedField.placeholder || ""}
+                    onChange={(e) => updatePreviewField(selectedField.id, { placeholder: e.target.value })}
+                    className="mt-1 w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
+                  />
+                </label>
+                <label className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={selectedField.required}
+                    onChange={(e) => updatePreviewField(selectedField.id, { required: e.target.checked })}
+                    className="h-4 w-4 accent-accent"
+                  />
+                  Required
+                </label>
+
+                {["select", "radio", "checkbox", "likert"].includes(selectedField.type) && (
+                  <label className="block text-xs font-medium text-muted">
+                    Options
+                    <textarea
+                      value={(selectedField.options || []).join("\n")}
+                      onChange={(e) => updateOptions(selectedField, e.target.value)}
+                      rows={6}
+                      className="mt-1 w-full resize-none rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
+                    />
+                  </label>
+                )}
+
+                {["scale", "rating"].includes(selectedField.type) && (
+                  <div className="grid grid-cols-2 gap-2">
+                    {selectedField.type === "scale" && (
+                      <label className="block text-xs font-medium text-muted">
+                        Min
+                        <input
+                          type="number"
+                          value={selectedField.min ?? 0}
+                          onChange={(e) => updatePreviewField(selectedField.id, { min: Number(e.target.value) })}
+                          className="mt-1 w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
+                        />
+                      </label>
+                    )}
+                    <label className="block text-xs font-medium text-muted">
+                      Max
+                      <input
+                        type="number"
+                        value={selectedField.max ?? (selectedField.type === "rating" ? 5 : 10)}
+                        onChange={(e) => updatePreviewField(selectedField.id, { max: Number(e.target.value) })}
+                        className="mt-1 w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
+                      />
+                    </label>
+                    {selectedField.type === "scale" && (
+                      <label className="block text-xs font-medium text-muted">
+                        Unit
+                        <input
+                          value={selectedField.unit || ""}
+                          onChange={(e) => updatePreviewField(selectedField.id, { unit: e.target.value })}
+                          className="mt-1 w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
+                        />
+                      </label>
+                    )}
+                  </div>
+                )}
+
+                {(selectedField.type === "file" || selectedField.type === "image") && (
+                  <label className="block text-xs font-medium text-muted">
+                    Accept
+                    <input
+                      value={selectedField.accept || ""}
+                      onChange={(e) => updatePreviewField(selectedField.id, { accept: e.target.value })}
+                      className="mt-1 w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
+                      placeholder="image/*, application/pdf"
+                    />
+                  </label>
+                )}
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    onClick={() => duplicatePreviewField(selectedField)}
+                    className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs font-medium text-muted hover:text-foreground"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                    Duplicate
+                  </button>
+                  <button
+                    onClick={() => removePreviewField(selectedField.id)}
+                    className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-danger/25 bg-danger/5 px-3 py-2 text-xs font-medium text-danger"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Delete
                   </button>
                 </div>
               </div>
             ) : (
-              <div className="flex-1 flex items-center justify-center">
-                <div className="text-center px-8">
-                  <div className="w-16 h-16 rounded-2xl bg-surface-2 border border-border flex items-center justify-center mx-auto mb-4">
-                    <svg className="w-8 h-8 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                    </svg>
-                  </div>
-                  <p className="text-foreground text-sm font-medium mb-1">Live Preview</p>
-                  <p className="text-muted text-xs">Your form will appear here as soon as it's generated</p>
-                </div>
-              </div>
+              <div className="p-4 text-sm text-muted">No field selected.</div>
             )}
-          </div>
+          </aside>
         </div>
       ) : (
         /* Forms List */
