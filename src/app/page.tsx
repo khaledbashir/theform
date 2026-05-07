@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
@@ -14,7 +14,9 @@ import {
   MessageSquare,
   Plus,
   Save,
+  Search,
   Trash2,
+  X,
 } from "lucide-react";
 
 interface FormField {
@@ -209,6 +211,7 @@ export default function Dashboard() {
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [formSearch, setFormSearch] = useState("");
 
   useEffect(() => {
     fetch("/api/forms")
@@ -573,6 +576,25 @@ export default function Dashboard() {
   const totalResponses = forms.reduce((sum, f) => sum + f._count.responses, 0);
   const hasHistory = messages.length > 0;
   const selectedField = preview?.fields?.find((field) => field.id === selectedFieldId) || null;
+  const filteredForms = useMemo(() => {
+    const query = formSearch.trim().toLowerCase();
+    if (!query) return forms;
+    return forms.filter((form) => {
+      const fieldText = (form.fields || [])
+        .map((field) => `${field.label} ${field.id} ${field.type} ${(field.options || []).join(" ")}`)
+        .join(" ");
+      const haystack = [
+        form.title,
+        form.description,
+        form.crmTarget,
+        fieldText,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [forms, formSearch]);
 
   return (
     <div className="h-screen flex flex-col">
@@ -1186,83 +1208,125 @@ export default function Dashboard() {
                 </button>
               </div>
             ) : (
-              <div className="space-y-3">
-                {forms.map((form) => (
-                  <div
-                    key={form.id}
-                    className="bg-surface border border-border rounded-xl p-4 hover:border-accent/30 transition-colors group"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h3 className="font-medium text-foreground truncate">{form.title}</h3>
-                          {/* Big response count pill — always shown so 0-response forms are visible too */}
-                          <span
-                            className={`shrink-0 inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-semibold ${
-                              form._count.responses > 0
-                                ? "bg-success/15 text-success"
-                                : "bg-surface-2 text-muted border border-border"
-                            }`}
-                          >
-                            {form._count.responses}
-                            <span className="font-normal opacity-80">
-                              {form._count.responses === 1 ? "response" : "responses"}
-                            </span>
-                          </span>
-                          {form.crmTarget && (
-                            <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-accent/10 text-accent font-medium">
-                              → {form.crmTarget}
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-sm text-muted truncate mt-1">{form.description}</p>
-                        <div className="flex items-center gap-3 mt-1.5 text-xs text-muted">
-                          <span title={new Date(form.createdAt).toLocaleString()}>
-                            Created {formatDistanceToNow(new Date(form.createdAt), { addSuffix: true })}
-                          </span>
-                          {form.lastResponseAt && (
-                            <>
-                              <span className="opacity-50">•</span>
-                              <span
-                                className="text-success/80"
-                                title={new Date(form.lastResponseAt).toLocaleString()}
-                              >
-                                Last submitted {formatDistanceToNow(new Date(form.lastResponseAt), { addSuffix: true })}
-                              </span>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 ml-4 shrink-0 opacity-60 group-hover:opacity-100 transition-opacity">
+              <div className="space-y-4">
+                <div className="bg-surface border border-border rounded-xl p-3">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="relative min-w-[240px] flex-1">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+                      <input
+                        type="search"
+                        value={formSearch}
+                        onChange={(e) => setFormSearch(e.target.value)}
+                        placeholder="Search forms, CRM targets, fields..."
+                        className="w-full rounded-lg border border-border bg-background py-2 pl-9 pr-9 text-sm text-foreground outline-none placeholder:text-muted focus:border-accent focus:ring-2 focus:ring-accent-subtle"
+                      />
+                      {formSearch && (
                         <button
-                          onClick={() => copyLink(form.id)}
-                          className="text-xs px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-muted hover:text-foreground hover:border-accent/30 transition-colors"
+                          onClick={() => setFormSearch("")}
+                          className="absolute right-2 top-1/2 rounded-md p-1 text-muted hover:bg-surface-2 hover:text-foreground -translate-y-1/2"
+                          title="Clear search"
                         >
-                          Copy Link
+                          <X className="h-3.5 w-3.5" />
                         </button>
-                        <Link
-                          href={`/f/${form.id}`}
-                          target="_blank"
-                          className="text-xs px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-muted hover:text-foreground hover:border-accent/30 transition-colors"
-                        >
-                          Preview
-                        </Link>
-                        <Link
-                          href={`/forms/${form.id}`}
-                          className="text-xs px-3 py-1.5 rounded-lg bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
-                        >
-                          Responses
-                        </Link>
-                        <button
-                          onClick={() => deleteForm(form.id)}
-                          className="text-xs px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-danger/70 hover:text-danger hover:border-danger/30 transition-colors"
-                        >
-                          Delete
-                        </button>
-                      </div>
+                      )}
                     </div>
+                    <span className="text-xs text-muted">
+                      {filteredForms.length} of {forms.length} form{forms.length !== 1 && "s"}
+                    </span>
                   </div>
-                ))}
+                </div>
+
+                {filteredForms.length === 0 ? (
+                  <div className="bg-surface border border-border rounded-xl p-10 text-center">
+                    <p className="text-sm font-medium text-foreground mb-1">No forms found</p>
+                    <p className="text-xs text-muted mb-4">Try a title, CRM target, field label, or field type.</p>
+                    <button
+                      onClick={() => setFormSearch("")}
+                      className="rounded-lg bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/20"
+                    >
+                      Clear search
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {filteredForms.map((form) => (
+                      <div
+                        key={form.id}
+                        className="bg-surface border border-border rounded-xl p-4 hover:border-accent/30 transition-colors group"
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h3 className="font-medium text-foreground truncate">{form.title}</h3>
+                              {/* Big response count pill — always shown so 0-response forms are visible too */}
+                              <span
+                                className={`shrink-0 inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-semibold ${
+                                  form._count.responses > 0
+                                    ? "bg-success/15 text-success"
+                                    : "bg-surface-2 text-muted border border-border"
+                                }`}
+                              >
+                                {form._count.responses}
+                                <span className="font-normal opacity-80">
+                                  {form._count.responses === 1 ? "response" : "responses"}
+                                </span>
+                              </span>
+                              {form.crmTarget && (
+                                <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-accent/10 text-accent font-medium">
+                                  → {form.crmTarget}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-sm text-muted truncate mt-1">{form.description}</p>
+                            <div className="flex items-center gap-3 mt-1.5 text-xs text-muted">
+                              <span title={new Date(form.createdAt).toLocaleString()}>
+                                Created {formatDistanceToNow(new Date(form.createdAt), { addSuffix: true })}
+                              </span>
+                              {form.lastResponseAt && (
+                                <>
+                                  <span className="opacity-50">•</span>
+                                  <span
+                                    className="text-success/80"
+                                    title={new Date(form.lastResponseAt).toLocaleString()}
+                                  >
+                                    Last submitted {formatDistanceToNow(new Date(form.lastResponseAt), { addSuffix: true })}
+                                  </span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 ml-4 shrink-0 opacity-60 group-hover:opacity-100 transition-opacity">
+                            <button
+                              onClick={() => copyLink(form.id)}
+                              className="text-xs px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-muted hover:text-foreground hover:border-accent/30 transition-colors"
+                            >
+                              Copy Link
+                            </button>
+                            <Link
+                              href={`/f/${form.id}`}
+                              target="_blank"
+                              className="text-xs px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-muted hover:text-foreground hover:border-accent/30 transition-colors"
+                            >
+                              Preview
+                            </Link>
+                            <Link
+                              href={`/forms/${form.id}`}
+                              className="text-xs px-3 py-1.5 rounded-lg bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
+                            >
+                              Responses
+                            </Link>
+                            <button
+                              onClick={() => deleteForm(form.id)}
+                              className="text-xs px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-danger/70 hover:text-danger hover:border-danger/30 transition-colors"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
