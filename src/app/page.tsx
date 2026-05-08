@@ -6,18 +6,26 @@ import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 import { Toast, useToast } from "@/components/Toast";
 import {
+  BarChart3,
+  CalendarClock,
   ChevronDown,
   ChevronUp,
   Copy,
   Eye,
   ExternalLink,
+  FileText,
+  Filter,
+  LayoutDashboard,
+  ListFilter,
   Loader2,
   MessageSquare,
   Monitor,
+  Pencil,
   Plus,
   Save,
   Search,
   Smartphone,
+  Sparkles,
   Trash2,
   X,
 } from "lucide-react";
@@ -215,6 +223,8 @@ export default function Dashboard() {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formSearch, setFormSearch] = useState("");
+  const [dashboardFilter, setDashboardFilter] = useState<"all" | "crm" | "standalone" | "active" | "quiet">("all");
+  const [dashboardSort, setDashboardSort] = useState<"newest" | "responses" | "recent" | "fields">("newest");
   const [receiverPreviewOpen, setReceiverPreviewOpen] = useState(false);
   const [receiverPreviewDevice, setReceiverPreviewDevice] = useState<"mobile" | "desktop">("mobile");
 
@@ -593,13 +603,79 @@ export default function Dashboard() {
     setReceiverPreviewOpen(true);
   };
 
+  const openFormInBuilder = (form: Form) => {
+    setPreview(form);
+    setSelectedFieldId(form.fields?.[0]?.id || null);
+    setDirty(false);
+    setReceiverPreviewOpen(false);
+    setTab("create");
+  };
+
+  const openFormReceiverPreview = (form: Form) => {
+    setPreview(form);
+    setSelectedFieldId(form.fields?.[0]?.id || null);
+    setDirty(false);
+    setReceiverPreviewDevice("mobile");
+    setReceiverPreviewOpen(true);
+  };
+
   const totalResponses = forms.reduce((sum, f) => sum + f._count.responses, 0);
   const hasHistory = messages.length > 0;
   const selectedField = preview?.fields?.find((field) => field.id === selectedFieldId) || null;
+  const connectedForms = forms.filter((form) => Boolean(form.crmTarget)).length;
+  const activeForms = forms.filter((form) => form._count.responses > 0).length;
+  const totalFields = forms.reduce((sum, form) => sum + (form.fields?.length || 0), 0);
+  const recentResponseForms = forms.filter((form) => {
+    if (!form.lastResponseAt) return false;
+    const lastResponse = new Date(form.lastResponseAt).getTime();
+    return Number.isFinite(lastResponse) && Date.now() - lastResponse <= 7 * 24 * 60 * 60 * 1000;
+  }).length;
+  const dashboardStats = [
+    {
+      label: "Forms",
+      value: forms.length,
+      detail: `${activeForms} with responses`,
+      icon: FileText,
+      color: "text-accent",
+      bg: "bg-accent/10",
+    },
+    {
+      label: "Responses",
+      value: totalResponses,
+      detail: `${recentResponseForms} active this week`,
+      icon: BarChart3,
+      color: "text-success",
+      bg: "bg-success/10",
+    },
+    {
+      label: "CRM connected",
+      value: connectedForms,
+      detail: `${forms.length - connectedForms} standalone`,
+      icon: LayoutDashboard,
+      color: "text-accent-secondary",
+      bg: "bg-accent-secondary/10",
+    },
+    {
+      label: "Fields",
+      value: totalFields,
+      detail: forms.length ? `${Math.round(totalFields / forms.length)} avg per form` : "0 avg per form",
+      icon: ListFilter,
+      color: "text-muted",
+      bg: "bg-surface-2",
+    },
+  ];
   const filteredForms = useMemo(() => {
     const query = formSearch.trim().toLowerCase();
-    if (!query) return forms;
-    return forms.filter((form) => {
+    return forms
+      .filter((form) => {
+        if (dashboardFilter === "crm" && !form.crmTarget) return false;
+        if (dashboardFilter === "standalone" && form.crmTarget) return false;
+        if (dashboardFilter === "active" && form._count.responses === 0) return false;
+        if (dashboardFilter === "quiet" && form._count.responses > 0) return false;
+        return true;
+      })
+      .filter((form) => {
+        if (!query) return true;
       const fieldText = (form.fields || [])
         .map((field) => `${field.label} ${field.id} ${field.type} ${(field.options || []).join(" ")}`)
         .join(" ");
@@ -613,8 +689,26 @@ export default function Dashboard() {
         .join(" ")
         .toLowerCase();
       return haystack.includes(query);
-    });
-  }, [forms, formSearch]);
+      })
+      .sort((a, b) => {
+        if (dashboardSort === "responses") return b._count.responses - a._count.responses;
+        if (dashboardSort === "recent") {
+          const aTime = a.lastResponseAt ? new Date(a.lastResponseAt).getTime() : 0;
+          const bTime = b.lastResponseAt ? new Date(b.lastResponseAt).getTime() : 0;
+          return bTime - aTime;
+        }
+        if (dashboardSort === "fields") return (b.fields?.length || 0) - (a.fields?.length || 0);
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      });
+  }, [forms, formSearch, dashboardFilter, dashboardSort]);
+  const topForms = useMemo(
+    () => [...forms].sort((a, b) => b._count.responses - a._count.responses).slice(0, 4),
+    [forms]
+  );
+  const recentForms = useMemo(
+    () => [...forms].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 4),
+    [forms]
+  );
 
   return (
     <div className="h-screen flex flex-col">
@@ -1212,9 +1306,8 @@ export default function Dashboard() {
           </aside>
         </div>
       ) : (
-        /* Forms List */
-        <div className="flex-1 overflow-y-auto p-6">
-          <div className="max-w-4xl mx-auto">
+        <div className="flex-1 overflow-y-auto bg-background">
+          <div className="mx-auto max-w-7xl px-6 py-6">
             {fetching ? (
               <div className="text-center text-muted py-12">
                 <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin mx-auto" />
@@ -1236,125 +1329,280 @@ export default function Dashboard() {
                 </button>
               </div>
             ) : (
-              <div className="space-y-4">
-                <div className="bg-surface border border-border rounded-xl p-3">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <div className="relative min-w-[240px] flex-1">
-                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-                      <input
-                        type="search"
-                        value={formSearch}
-                        onChange={(e) => setFormSearch(e.target.value)}
-                        placeholder="Search forms, CRM targets, fields..."
-                        className="w-full rounded-lg border border-border bg-background py-2 pl-9 pr-9 text-sm text-foreground outline-none placeholder:text-muted focus:border-accent focus:ring-2 focus:ring-accent-subtle"
-                      />
-                      {formSearch && (
-                        <button
-                          onClick={() => setFormSearch("")}
-                          className="absolute right-2 top-1/2 rounded-md p-1 text-muted hover:bg-surface-2 hover:text-foreground -translate-y-1/2"
-                          title="Clear search"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      )}
+              <div className="space-y-5">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <LayoutDashboard className="h-5 w-5 text-accent" />
+                      <h2 className="text-xl font-semibold text-foreground">Forms dashboard</h2>
                     </div>
-                    <span className="text-xs text-muted">
-                      {filteredForms.length} of {forms.length} form{forms.length !== 1 && "s"}
-                    </span>
+                    <p className="mt-1 text-sm text-muted">
+                      {forms.length} form{forms.length !== 1 && "s"} · {totalResponses} response{totalResponses !== 1 && "s"}
+                    </p>
                   </div>
+                  <button
+                    onClick={() => setTab("create")}
+                    className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-hover"
+                  >
+                    <Plus className="h-4 w-4" />
+                    New form
+                  </button>
                 </div>
 
-                {filteredForms.length === 0 ? (
-                  <div className="bg-surface border border-border rounded-xl p-10 text-center">
-                    <p className="text-sm font-medium text-foreground mb-1">No forms found</p>
-                    <p className="text-xs text-muted mb-4">Try a title, CRM target, field label, or field type.</p>
-                    <button
-                      onClick={() => setFormSearch("")}
-                      className="rounded-lg bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/20"
-                    >
-                      Clear search
-                    </button>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {filteredForms.map((form) => (
-                      <div
-                        key={form.id}
-                        className="bg-surface border border-border rounded-xl p-4 hover:border-accent/30 transition-colors group"
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <h3 className="font-medium text-foreground truncate">{form.title}</h3>
-                              {/* Big response count pill — always shown so 0-response forms are visible too */}
-                              <span
-                                className={`shrink-0 inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-semibold ${
-                                  form._count.responses > 0
-                                    ? "bg-success/15 text-success"
-                                    : "bg-surface-2 text-muted border border-border"
-                                }`}
-                              >
-                                {form._count.responses}
-                                <span className="font-normal opacity-80">
-                                  {form._count.responses === 1 ? "response" : "responses"}
-                                </span>
-                              </span>
-                              {form.crmTarget && (
-                                <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-accent/10 text-accent font-medium">
-                                  → {form.crmTarget}
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-sm text-muted truncate mt-1">{form.description}</p>
-                            <div className="flex items-center gap-3 mt-1.5 text-xs text-muted">
-                              <span title={new Date(form.createdAt).toLocaleString()}>
-                                Created {formatDistanceToNow(new Date(form.createdAt), { addSuffix: true })}
-                              </span>
-                              {form.lastResponseAt && (
-                                <>
-                                  <span className="opacity-50">•</span>
-                                  <span
-                                    className="text-success/80"
-                                    title={new Date(form.lastResponseAt).toLocaleString()}
-                                  >
-                                    Last submitted {formatDistanceToNow(new Date(form.lastResponseAt), { addSuffix: true })}
-                                  </span>
-                                </>
-                              )}
-                            </div>
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  {dashboardStats.map((stat) => {
+                    const Icon = stat.icon;
+                    return (
+                      <div key={stat.label} className="rounded-lg border border-border bg-surface p-4 shadow-sm">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-xs font-medium uppercase tracking-wide text-muted">{stat.label}</p>
+                            <p className="mt-2 text-2xl font-semibold text-foreground">{stat.value}</p>
                           </div>
-                          <div className="flex items-center gap-2 ml-4 shrink-0 opacity-60 group-hover:opacity-100 transition-opacity">
-                            <button
-                              onClick={() => copyLink(form.id)}
-                              className="text-xs px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-muted hover:text-foreground hover:border-accent/30 transition-colors"
-                            >
-                              Copy Link
-                            </button>
-                            <Link
-                              href={`/f/${form.id}`}
-                              target="_blank"
-                              className="text-xs px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-muted hover:text-foreground hover:border-accent/30 transition-colors"
-                            >
-                              Preview
-                            </Link>
-                            <Link
-                              href={`/forms/${form.id}`}
-                              className="text-xs px-3 py-1.5 rounded-lg bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
-                            >
-                              Responses
-                            </Link>
-                            <button
-                              onClick={() => deleteForm(form.id)}
-                              className="text-xs px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-danger/70 hover:text-danger hover:border-danger/30 transition-colors"
-                            >
-                              Delete
-                            </button>
-                          </div>
+                          <span className={`rounded-lg p-2 ${stat.bg} ${stat.color}`}>
+                            <Icon className="h-4 w-4" />
+                          </span>
                         </div>
+                        <p className="mt-2 text-xs text-muted">{stat.detail}</p>
                       </div>
-                    ))}
+                    );
+                  })}
+                </div>
+
+                <div className="grid gap-5 xl:grid-cols-[1fr_330px]">
+                  <div className="space-y-4">
+                    <div className="rounded-lg border border-border bg-surface p-3 shadow-sm">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <div className="relative min-w-[260px] flex-1">
+                          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+                          <input
+                            type="search"
+                            value={formSearch}
+                            onChange={(e) => setFormSearch(e.target.value)}
+                            placeholder="Search forms, CRM targets, fields..."
+                            className="w-full rounded-lg border border-border bg-background py-2 pl-9 pr-9 text-sm text-foreground outline-none placeholder:text-muted focus:border-accent focus:ring-2 focus:ring-accent-subtle"
+                          />
+                          {formSearch && (
+                            <button
+                              onClick={() => setFormSearch("")}
+                              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted hover:bg-surface-2 hover:text-foreground"
+                              title="Clear search"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Filter className="h-4 w-4 text-muted" />
+                          <select
+                            value={dashboardFilter}
+                            onChange={(e) => setDashboardFilter(e.target.value as typeof dashboardFilter)}
+                            className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
+                          >
+                            <option value="all">All forms</option>
+                            <option value="crm">CRM connected</option>
+                            <option value="standalone">Standalone</option>
+                            <option value="active">Has responses</option>
+                            <option value="quiet">No responses</option>
+                          </select>
+                        </div>
+                        <select
+                          value={dashboardSort}
+                          onChange={(e) => setDashboardSort(e.target.value as typeof dashboardSort)}
+                          className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
+                        >
+                          <option value="newest">Newest</option>
+                          <option value="responses">Most responses</option>
+                          <option value="recent">Recent submissions</option>
+                          <option value="fields">Most fields</option>
+                        </select>
+                        <span className="text-xs text-muted">
+                          {filteredForms.length} of {forms.length}
+                        </span>
+                      </div>
+                    </div>
+
+                    {filteredForms.length === 0 ? (
+                      <div className="rounded-lg border border-border bg-surface p-10 text-center">
+                        <p className="mb-1 text-sm font-medium text-foreground">No forms found</p>
+                        <p className="mb-4 text-xs text-muted">Try a title, CRM target, field label, or field type.</p>
+                        <button
+                          onClick={() => {
+                            setFormSearch("");
+                            setDashboardFilter("all");
+                          }}
+                          className="rounded-lg bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/20"
+                        >
+                          Clear filters
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-sm">
+                        {filteredForms.map((form) => (
+                          <div
+                            key={form.id}
+                            className="group border-b border-border p-4 transition-colors last:border-b-0 hover:bg-accent/5"
+                          >
+                            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                              <div className="min-w-0 flex-1">
+                                <div className="mb-2 flex flex-wrap items-center gap-2">
+                                  <h3 className="truncate text-sm font-semibold text-foreground">{form.title}</h3>
+                                  <span
+                                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                                      form._count.responses > 0
+                                        ? "bg-success/15 text-success"
+                                        : "border border-border bg-surface-2 text-muted"
+                                    }`}
+                                  >
+                                    <BarChart3 className="h-3 w-3" />
+                                    {form._count.responses}
+                                  </span>
+                                  <span className="rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-muted">
+                                    {form.fields?.length || 0} fields
+                                  </span>
+                                  {form.crmTarget ? (
+                                    <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[11px] font-medium text-accent">
+                                      {form.crmTarget}
+                                    </span>
+                                  ) : (
+                                    <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-muted">
+                                      Standalone
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="truncate text-sm text-muted">{form.description}</p>
+                                <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted">
+                                  <span title={new Date(form.createdAt).toLocaleString()}>
+                                    Created {formatDistanceToNow(new Date(form.createdAt), { addSuffix: true })}
+                                  </span>
+                                  {form.lastResponseAt && (
+                                    <span className="inline-flex items-center gap-1 text-success/90" title={new Date(form.lastResponseAt).toLocaleString()}>
+                                      <CalendarClock className="h-3 w-3" />
+                                      {formatDistanceToNow(new Date(form.lastResponseAt), { addSuffix: true })}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                                <button
+                                  onClick={() => openFormInBuilder(form)}
+                                  className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-muted hover:border-accent/30 hover:text-foreground"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                  Edit
+                                </button>
+                                <button
+                                  onClick={() => openFormReceiverPreview(form)}
+                                  className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-muted hover:border-accent/30 hover:text-foreground"
+                                >
+                                  <Eye className="h-3.5 w-3.5" />
+                                  Preview
+                                </button>
+                                <button
+                                  onClick={() => copyLink(form.id)}
+                                  className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-muted hover:border-accent/30 hover:text-foreground"
+                                >
+                                  <Copy className="h-3.5 w-3.5" />
+                                  Copy
+                                </button>
+                                <Link
+                                  href={`/forms/${form.id}`}
+                                  className="inline-flex items-center gap-1.5 rounded-lg bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/20"
+                                >
+                                  <BarChart3 className="h-3.5 w-3.5" />
+                                  Responses
+                                </Link>
+                                <button
+                                  onClick={() => deleteForm(form.id)}
+                                  className="rounded-lg border border-danger/25 bg-danger/5 p-1.5 text-danger/75 hover:text-danger"
+                                  title="Delete form"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                )}
+
+                  <aside className="space-y-4">
+                    <div className="rounded-lg border border-border bg-surface p-4 shadow-sm">
+                      <div className="mb-3 flex items-center gap-2">
+                        <Sparkles className="h-4 w-4 text-accent" />
+                        <h3 className="text-sm font-semibold text-foreground">Top forms</h3>
+                      </div>
+                      <div className="space-y-2">
+                        {topForms.map((form) => (
+                          <button
+                            key={form.id}
+                            onClick={() => openFormInBuilder(form)}
+                            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-left hover:border-accent/30"
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="truncate text-sm font-medium text-foreground">{form.title}</span>
+                              <span className="shrink-0 text-xs font-semibold text-success">{form._count.responses}</span>
+                            </div>
+                            <p className="mt-1 truncate text-xs text-muted">
+                              {form.crmTarget || "Standalone"} · {form.fields?.length || 0} fields
+                            </p>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-border bg-surface p-4 shadow-sm">
+                      <div className="mb-3 flex items-center gap-2">
+                        <CalendarClock className="h-4 w-4 text-success" />
+                        <h3 className="text-sm font-semibold text-foreground">Recent forms</h3>
+                      </div>
+                      <div className="space-y-2">
+                        {recentForms.map((form) => (
+                          <div key={form.id} className="rounded-lg border border-border bg-background p-3">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-medium text-foreground">{form.title}</p>
+                                <p className="mt-1 text-xs text-muted">
+                                  {formatDistanceToNow(new Date(form.createdAt), { addSuffix: true })}
+                                </p>
+                              </div>
+                              <button
+                                onClick={() => openFormReceiverPreview(form)}
+                                className="rounded-md p-1.5 text-muted hover:bg-surface-2 hover:text-foreground"
+                                title="Receiver preview"
+                              >
+                                <Eye className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-border bg-surface p-4 shadow-sm">
+                      <h3 className="mb-3 text-sm font-semibold text-foreground">Quick actions</h3>
+                      <div className="grid gap-2">
+                        <button
+                          onClick={startBlankBuilder}
+                          disabled={loading}
+                          className="inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-50"
+                        >
+                          <Plus className="h-4 w-4" />
+                          Blank builder
+                        </button>
+                        <button
+                          onClick={startCustomConversation}
+                          disabled={loading}
+                          className="inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium text-muted hover:border-accent/30 hover:text-foreground disabled:opacity-50"
+                        >
+                          <MessageSquare className="h-4 w-4" />
+                          AI custom form
+                        </button>
+                      </div>
+                    </div>
+                  </aside>
+                </div>
               </div>
             )}
           </div>
