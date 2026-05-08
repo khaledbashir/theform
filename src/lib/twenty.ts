@@ -399,12 +399,15 @@ async function createLinkedPersonForCompany(
   const name = splitFullName(contact.name || String(payload.name || "New Contact"));
   const personPayload: Record<string, unknown> = {
     companyId,
-    nameFirstName: name.firstName,
-    nameLastName: name.lastName,
-    emailsPrimaryEmail: contact.email || undefined,
-    phonesPrimaryPhoneNumber: contact.phone || undefined,
-    phonesPrimaryPhoneCountryCode: contact.phone ? "US" : undefined,
-    phonesPrimaryPhoneCallingCode: contact.phone ? "+1" : undefined,
+    name: { firstName: name.firstName, lastName: name.lastName },
+    emails: contact.email ? { primaryEmail: contact.email } : undefined,
+    phones: contact.phone
+      ? {
+          primaryPhoneNumber: contact.phone,
+          primaryPhoneCountryCode: "US",
+          primaryPhoneCallingCode: "+1",
+        }
+      : undefined,
     jobTitle: contact.jobTitle || undefined,
   };
 
