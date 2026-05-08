@@ -115,6 +115,15 @@ function toWalkthroughResult(value: unknown): string | null {
 }
 
 function deriveRecordName(target: string, responseData: Record<string, unknown>): string | null {
+  if (target === "companies") {
+    return (
+      asTrimmedString(responseData.company_name) ||
+      asTrimmedString(responseData.account_name) ||
+      asTrimmedString(responseData.organization_name) ||
+      asTrimmedString(responseData.name) ||
+      null
+    );
+  }
   if (target === "partsOrders") return asTrimmedString(responseData.venue_name) || null;
   if (target === "designRequests") {
     const client = asTrimmedString(responseData.client_name);
@@ -202,6 +211,17 @@ async function enrichTwentyPayload(
     if (derived) out.name = derived;
   }
 
+  if (target === "companies") {
+    const website =
+      asTrimmedString(responseData.website) ||
+      asTrimmedString(responseData.domain) ||
+      asTrimmedString(responseData.domain_name);
+    if (website && !out.domainNamePrimaryLinkUrl) {
+      out.domainNamePrimaryLinkUrl = website.startsWith("http") ? website : `https://${website}`;
+      out.domainNamePrimaryLinkLabel = website.replace(/^https?:\/\//, "");
+    }
+  }
+
   if (target === "partsOrders") {
     out.status ||= "STATUS_REQUEST_SUBMITTED";
     out.venueId ||= asTrimmedString(responseData.venue_name__id) || await lookupVenueIdByName(asTrimmedString(responseData.venue_name));
@@ -277,6 +297,139 @@ export async function buildTwentyPayload(
   return enrichTwentyPayload(target, out, responseData);
 }
 
+const COMPANY_WRITABLE_KEYS = new Set([
+  "name",
+  "domainNamePrimaryLinkLabel",
+  "domainNamePrimaryLinkUrl",
+  "domainNameSecondaryLinks",
+  "addressAddressStreet1",
+  "addressAddressStreet2",
+  "addressAddressCity",
+  "addressAddressPostcode",
+  "addressAddressState",
+  "addressAddressCountry",
+  "employees",
+  "linkedinLinkPrimaryLinkLabel",
+  "linkedinLinkPrimaryLinkUrl",
+  "xLinkPrimaryLinkLabel",
+  "xLinkPrimaryLinkUrl",
+  "annualRecurringRevenueAmountMicros",
+  "annualRecurringRevenueCurrencyCode",
+  "idealCustomerProfile",
+  "accountOwnerId",
+  "totalLedSqFt",
+  "displayCount",
+  "venueName",
+  "capacity",
+  "contractStart",
+  "contractEnd",
+  "annualContractValueAmountMicros",
+  "annualContractValueCurrencyCode",
+  "revenueType",
+  "region",
+  "partnerType",
+  "venueType",
+  "serviceStatus",
+  "league",
+  "hasFiles",
+  "testNotesMarkdown",
+  "parentCompanyId",
+]);
+
+function pickCompanyPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const company: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(payload)) {
+    if (COMPANY_WRITABLE_KEYS.has(key) && value != null && value !== "") {
+      company[key] = value;
+    }
+  }
+  return company;
+}
+
+function extractContactDraft(payload: Record<string, unknown>): {
+  name: string;
+  email: string;
+  phone: string;
+  jobTitle: string;
+} {
+  return {
+    name:
+      asTrimmedString(payload.contactName) ||
+      asTrimmedString(payload.contact_name) ||
+      asTrimmedString(payload.personName) ||
+      asTrimmedString(payload.person_name) ||
+      asTrimmedString(payload.fullName) ||
+      asTrimmedString(payload.full_name) ||
+      asTrimmedString(payload.name),
+    email:
+      asTrimmedString(payload.email) ||
+      asTrimmedString(payload.contactEmail) ||
+      asTrimmedString(payload.contact_email) ||
+      asTrimmedString(payload.requesterEmail) ||
+      asTrimmedString(payload.requester_email),
+    phone:
+      asTrimmedString(payload.phone) ||
+      asTrimmedString(payload.contactPhone) ||
+      asTrimmedString(payload.contact_phone) ||
+      asTrimmedString(payload.phoneNumber) ||
+      asTrimmedString(payload.phone_number),
+    jobTitle:
+      asTrimmedString(payload.jobTitle) ||
+      asTrimmedString(payload.job_title) ||
+      asTrimmedString(payload.title),
+  };
+}
+
+function splitFullName(fullName: string): { firstName: string; lastName: string } {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  if (parts.length <= 1) return { firstName: parts[0] || "", lastName: "" };
+  return {
+    firstName: parts.slice(0, -1).join(" "),
+    lastName: parts[parts.length - 1],
+  };
+}
+
+async function createLinkedPersonForCompany(
+  companyId: string,
+  payload: Record<string, unknown>
+): Promise<void> {
+  const contact = extractContactDraft(payload);
+  if (!contact.name && !contact.email && !contact.phone) return;
+
+  const name = splitFullName(contact.name || String(payload.name || "New Contact"));
+  const personPayload: Record<string, unknown> = {
+    companyId,
+    nameFirstName: name.firstName,
+    nameLastName: name.lastName,
+    emailsPrimaryEmail: contact.email || undefined,
+    phonesPrimaryPhoneNumber: contact.phone || undefined,
+    phonesPrimaryPhoneCountryCode: contact.phone ? "US" : undefined,
+    phonesPrimaryPhoneCallingCode: contact.phone ? "+1" : undefined,
+    jobTitle: contact.jobTitle || undefined,
+  };
+
+  Object.keys(personPayload).forEach((key) => {
+    if (personPayload[key] == null || personPayload[key] === "") delete personPayload[key];
+  });
+
+  if (!Object.keys(personPayload).some((key) => key !== "companyId")) return;
+
+  const res = await fetch(`${BASE}/rest/people`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(personPayload),
+  });
+
+  // Duplicate emails should not make the company submission fail.
+  if (!res.ok && res.status !== 400 && res.status !== 409) {
+    const data = await res.json().catch(() => ({}));
+    console.error("[forms] linked person create failed:", data?.messages?.[0] || data?.error || res.status);
+  }
+}
+
 /**
  * POST a record to a Twenty custom object endpoint.
  * Returns { ok, id?, error? }.
@@ -289,20 +442,32 @@ export async function createTwentyRecord(
   if (!target) return { ok: false, error: "crmTarget missing" };
 
   try {
+    const writeTarget = target === "companies" ? "companies" : target;
+    const writePayload = target === "companies" ? pickCompanyPayload(payload) : payload;
+
+    if (target === "companies" && !asTrimmedString(writePayload.name)) {
+      return { ok: false, error: "Company name is required" };
+    }
+
     const res = await fetch(`${BASE}/rest/${target}`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${KEY}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(writePayload),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       const msg = data?.messages?.[0] || data?.error || `HTTP ${res.status}`;
       return { ok: false, error: String(msg) };
     }
-    const singular = target.endsWith("s") ? target.slice(0, -1) : target;
+    const singular =
+      target === "companies" ? "company" :
+      target === "people" ? "person" :
+      target.endsWith("ies") ? `${target.slice(0, -3)}y` :
+      target.endsWith("s") ? target.slice(0, -1) :
+      target;
     const createKey = `create${singular.charAt(0).toUpperCase()}${singular.slice(1)}`;
     const record =
       data?.data?.[createKey] ||
@@ -312,6 +477,11 @@ export async function createTwentyRecord(
     if (!record?.id) {
       return { ok: false, error: "Twenty returned no record id" };
     }
+
+    if (writeTarget === "companies") {
+      await createLinkedPersonForCompany(record.id, payload);
+    }
+
     return { ok: true, id: record.id, name: record.name };
   } catch (err: any) {
     return { ok: false, error: err?.message || "Network error" };
