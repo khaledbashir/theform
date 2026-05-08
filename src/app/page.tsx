@@ -9,12 +9,15 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  Eye,
   ExternalLink,
   Loader2,
   MessageSquare,
+  Monitor,
   Plus,
   Save,
   Search,
+  Smartphone,
   Trash2,
   X,
 } from "lucide-react";
@@ -212,6 +215,8 @@ export default function Dashboard() {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formSearch, setFormSearch] = useState("");
+  const [receiverPreviewOpen, setReceiverPreviewOpen] = useState(false);
+  const [receiverPreviewDevice, setReceiverPreviewDevice] = useState<"mobile" | "desktop">("mobile");
 
   useEffect(() => {
     fetch("/api/forms")
@@ -536,8 +541,8 @@ export default function Dashboard() {
     }
   };
 
-  const savePreview = async () => {
-    if (!preview) return;
+  const persistPreview = async () => {
+    if (!preview) return null;
     setSaving(true);
     try {
       const res = await fetch(`/api/forms/${preview.id}`, {
@@ -566,11 +571,26 @@ export default function Dashboard() {
       setPreview((current) => (current ? { ...current, ...saved } : current));
       setDirty(false);
       showToast("Builder changes saved");
+      return saved as Form;
     } catch (error: unknown) {
       showToast(error instanceof Error ? error.message : "Save failed");
+      return null;
     } finally {
       setSaving(false);
     }
+  };
+
+  const savePreview = async () => {
+    await persistPreview();
+  };
+
+  const openReceiverPreview = async () => {
+    if (!preview) return;
+    if (dirty) {
+      const saved = await persistPreview();
+      if (!saved) return;
+    }
+    setReceiverPreviewOpen(true);
   };
 
   const totalResponses = forms.reduce((sum, f) => sum + f._count.responses, 0);
@@ -821,6 +841,14 @@ export default function Dashboard() {
                         >
                           <Copy className="h-3.5 w-3.5" />
                           Copy
+                        </button>
+                        <button
+                          onClick={openReceiverPreview}
+                          disabled={saving}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-45"
+                        >
+                          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />}
+                          Receiver preview
                         </button>
                         <Link
                           href={`/f/${preview.id}`}
@@ -1329,6 +1357,72 @@ export default function Dashboard() {
                 )}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {receiverPreviewOpen && preview && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-background">
+          <div className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-surface px-4">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-foreground">Receiver preview</p>
+              <p className="truncate text-xs text-muted">{preview.title}</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="flex rounded-lg border border-border bg-surface-2 p-1">
+                <button
+                  onClick={() => setReceiverPreviewDevice("mobile")}
+                  className={`rounded-md p-1.5 ${
+                    receiverPreviewDevice === "mobile"
+                      ? "bg-accent text-white"
+                      : "text-muted hover:text-foreground"
+                  }`}
+                  title="Mobile preview"
+                >
+                  <Smartphone className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={() => setReceiverPreviewDevice("desktop")}
+                  className={`rounded-md p-1.5 ${
+                    receiverPreviewDevice === "desktop"
+                      ? "bg-accent text-white"
+                      : "text-muted hover:text-foreground"
+                  }`}
+                  title="Desktop preview"
+                >
+                  <Monitor className="h-4 w-4" />
+                </button>
+              </div>
+              <Link
+                href={`/f/${preview.id}?preview=1`}
+                target="_blank"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs font-medium text-muted hover:text-foreground"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                Open
+              </Link>
+              <button
+                onClick={() => setReceiverPreviewOpen(false)}
+                className="rounded-lg border border-border bg-surface-2 p-2 text-muted hover:text-foreground"
+                title="Close preview"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+          <div className="flex-1 overflow-auto bg-surface-2 p-4">
+            <div
+              className={`mx-auto h-full overflow-hidden rounded-xl border border-border bg-background shadow-md ${
+                receiverPreviewDevice === "mobile" ? "max-w-[430px]" : "max-w-5xl"
+              }`}
+            >
+              <iframe
+                key={`${preview.id}-${receiverPreviewDevice}`}
+                src={`/f/${preview.id}?preview=1`}
+                title="Receiver preview"
+                className="h-full min-h-[720px] w-full bg-background"
+              />
+            </div>
           </div>
         </div>
       )}

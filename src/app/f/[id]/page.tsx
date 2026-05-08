@@ -57,10 +57,13 @@ interface FormData {
   fields: FormField[];
 }
 
+type FieldValue = string | number | string[];
+
 export default function PublicForm() {
   const { id } = useParams();
+  const [previewMode, setPreviewMode] = useState(false);
   const [form, setForm] = useState<FormData | null>(null);
-  const [values, setValues] = useState<Record<string, any>>({});
+  const [values, setValues] = useState<Record<string, FieldValue>>({});
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -74,11 +77,15 @@ export default function PublicForm() {
   const [venueAssets, setVenueAssets] = useState<Record<string, AssetOption[]>>({});
 
   useEffect(() => {
+    setPreviewMode(new URLSearchParams(window.location.search).get("preview") === "1");
+  }, []);
+
+  useEffect(() => {
     fetch(`/api/forms/${id}`)
       .then((r) => r.json())
       .then((data) => {
         setForm(data);
-        const initial: Record<string, any> = {};
+        const initial: Record<string, FieldValue> = {};
         data.fields?.forEach((f: FormField) => {
           if (f.type === "checkbox") {
             initial[f.id] = [];
@@ -100,13 +107,28 @@ export default function PublicForm() {
       .catch(() => setError("Form not found"));
   }, [id]);
 
-  const setValue = (fieldId: string, value: any) => {
+  const setValue = (fieldId: string, value: FieldValue) => {
     setValues((prev) => ({ ...prev, [fieldId]: value }));
+  };
+
+  const textValue = (fieldId: string) => {
+    const value = values[fieldId];
+    return Array.isArray(value) ? "" : String(value ?? "");
+  };
+
+  const arrayValue = (fieldId: string) => {
+    const value = values[fieldId];
+    return Array.isArray(value) ? value : [];
+  };
+
+  const hasValue = (fieldId: string) => {
+    const value = values[fieldId];
+    return Array.isArray(value) ? value.length > 0 : value !== undefined && value !== "";
   };
 
   const toggleCheckbox = (fieldId: string, option: string) => {
     setValues((prev) => {
-      const current = prev[fieldId] || [];
+      const current = Array.isArray(prev[fieldId]) ? prev[fieldId] : [];
       return {
         ...prev,
         [fieldId]: current.includes(option)
@@ -200,7 +222,7 @@ export default function PublicForm() {
   // Asset chip toggle for venue_assets fields
   const toggleAsset = (fieldId: string, assetId: string) => {
     setValues((prev) => {
-      const current: string[] = prev[fieldId] || [];
+      const current = Array.isArray(prev[fieldId]) ? prev[fieldId] : [];
       const next = current.includes(assetId)
         ? current.filter((x) => x !== assetId)
         : [...current, assetId];
@@ -209,6 +231,7 @@ export default function PublicForm() {
   };
 
   const handleSignatureChange = async (fieldId: string, dataUrl: string | null) => {
+    if (previewMode) return;
     if (!dataUrl) {
       setValue(fieldId, "");
       setUploadInfo((prev) => ({ ...prev, [fieldId]: null }));
@@ -230,14 +253,18 @@ export default function PublicForm() {
         : `${window.location.origin}${data.url}`;
       setValue(fieldId, absoluteUrl);
       setUploadInfo((prev) => ({ ...prev, [fieldId]: { ...data, url: absoluteUrl } }));
-    } catch (e: any) {
-      setUploadError((prev) => ({ ...prev, [fieldId]: e.message || "Signature upload failed" }));
+    } catch (e: unknown) {
+      setUploadError((prev) => ({
+        ...prev,
+        [fieldId]: e instanceof Error ? e.message : "Signature upload failed",
+      }));
     } finally {
       setUploading((prev) => ({ ...prev, [fieldId]: false }));
     }
   };
 
   const handleFileChange = async (fieldId: string, file: File | null) => {
+    if (previewMode) return;
     if (!file) {
       setValue(fieldId, "");
       setUploadInfo((prev) => ({ ...prev, [fieldId]: null }));
@@ -262,8 +289,11 @@ export default function PublicForm() {
         : `${window.location.origin}${data.url}`;
       setValue(fieldId, absoluteUrl);
       setUploadInfo((prev) => ({ ...prev, [fieldId]: { ...data, url: absoluteUrl } }));
-    } catch (e: any) {
-      setUploadError((prev) => ({ ...prev, [fieldId]: e.message || "Upload failed" }));
+    } catch (e: unknown) {
+      setUploadError((prev) => ({
+        ...prev,
+        [fieldId]: e instanceof Error ? e.message : "Upload failed",
+      }));
       setValue(fieldId, "");
       setUploadInfo((prev) => ({ ...prev, [fieldId]: null }));
     } finally {
@@ -273,6 +303,7 @@ export default function PublicForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (previewMode) return;
     setSubmitting(true);
     try {
       await fetch(`/api/forms/${id}/responses`, {
@@ -347,26 +378,33 @@ export default function PublicForm() {
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-5">
-            {form.fields.map((field) => (
-              <div key={field.id} className="form-field">
-                <label className="block text-sm font-medium text-foreground mb-1.5">
-                  {field.label}
-                  {field.required && <span className="text-danger ml-1">*</span>}
-                </label>
+          {previewMode && (
+            <div className="mb-5 rounded-lg border border-accent/20 bg-accent/5 px-3 py-2 text-xs font-medium text-accent">
+              Receiver preview only. Submissions are disabled here.
+            </div>
+          )}
 
-                {field.type === "textarea" ? (
+          <form onSubmit={handleSubmit}>
+            <fieldset disabled={previewMode} className="space-y-5 disabled:opacity-90">
+              {form.fields.map((field) => (
+                <div key={field.id} className="form-field">
+                  <label className="block text-sm font-medium text-foreground mb-1.5">
+                    {field.label}
+                    {field.required && <span className="text-danger ml-1">*</span>}
+                  </label>
+
+                  {field.type === "textarea" ? (
                   <textarea
                     placeholder={field.placeholder}
                     required={field.required}
                     rows={4}
-                    value={values[field.id] || ""}
+                    value={textValue(field.id)}
                     onChange={(e) => setValue(field.id, e.target.value)}
                   />
                 ) : field.type === "select" ? (
                   <select
                     required={field.required}
-                    value={values[field.id] || ""}
+                    value={textValue(field.id)}
                     onChange={(e) => setValue(field.id, e.target.value)}
                   >
                     <option value="">Select...</option>
@@ -383,7 +421,7 @@ export default function PublicForm() {
                           name={field.id}
                           value={opt}
                           required={field.required}
-                          checked={values[field.id] === opt}
+                          checked={textValue(field.id) === opt}
                           onChange={() => setValue(field.id, opt)}
                         />
                         {opt}
@@ -396,7 +434,7 @@ export default function PublicForm() {
                       <label key={opt} className="checkbox-option">
                         <input
                           type="checkbox"
-                          checked={(values[field.id] || []).includes(opt)}
+                          checked={arrayValue(field.id).includes(opt)}
                           onChange={() => toggleCheckbox(field.id, opt)}
                         />
                         {opt}
@@ -409,7 +447,7 @@ export default function PublicForm() {
                     const mn = field.min ?? 0;
                     const mx = field.max ?? 100;
                     const stp = field.step ?? 1;
-                    const v = Number(values[field.id] ?? Math.round((mn + mx) / 2));
+                    const v = Number(textValue(field.id) || Math.round((mn + mx) / 2));
                     return (
                       <div className="space-y-2">
                         <div className="flex items-center justify-between">
@@ -437,7 +475,7 @@ export default function PublicForm() {
                   // Star rating — clickable buttons. Default 1-5 stars, override via field.max.
                   (() => {
                     const mx = field.max ?? 5;
-                    const v = Number(values[field.id] || 0);
+                    const v = Number(textValue(field.id) || 0);
                     return (
                       <div className="flex items-center gap-1">
                         {Array.from({ length: mx }).map((_, i) => {
@@ -479,7 +517,7 @@ export default function PublicForm() {
                   <div className="space-y-2">
                     <SignaturePad
                       required={field.required}
-                      disabled={uploading[field.id]}
+                      disabled={previewMode || uploading[field.id]}
                       onChange={(url) => handleSignatureChange(field.id, url)}
                     />
                     {uploading[field.id] && <p className="text-xs text-muted">Saving signature…</p>}
@@ -491,20 +529,20 @@ export default function PublicForm() {
                   <input
                     type="time"
                     required={field.required}
-                    value={values[field.id] || ""}
+                    value={textValue(field.id)}
                     onChange={(e) => setValue(field.id, e.target.value)}
                   />
                 ) : field.type === "datetime" ? (
                   <input
                     type="datetime-local"
                     required={field.required}
-                    value={values[field.id] || ""}
+                    value={textValue(field.id)}
                     onChange={(e) => setValue(field.id, e.target.value)}
                   />
                 ) : field.type === "yes_no" ? (
                   <div className="flex gap-2">
                     {["Yes", "No"].map((opt) => {
-                      const selected = values[field.id] === opt;
+                      const selected = textValue(field.id) === opt;
                       return (
                         <button
                           key={opt}
@@ -526,7 +564,7 @@ export default function PublicForm() {
                     {field.required && (
                       <input
                         type="text"
-                        value={values[field.id] || ""}
+                        value={textValue(field.id)}
                         required
                         tabIndex={-1}
                         onChange={() => {}}
@@ -545,7 +583,7 @@ export default function PublicForm() {
                       <div className="space-y-2">
                         <div className="grid grid-cols-5 gap-1">
                           {labels.map((opt) => {
-                            const selected = values[field.id] === opt;
+                            const selected = textValue(field.id) === opt;
                             return (
                               <button
                                 key={opt}
@@ -565,7 +603,7 @@ export default function PublicForm() {
                         {field.required && (
                           <input
                             type="text"
-                            value={values[field.id] || ""}
+                            value={textValue(field.id)}
                             required
                             tabIndex={-1}
                             onChange={() => {}}
@@ -580,7 +618,7 @@ export default function PublicForm() {
                     <input
                       type="file"
                       accept={field.accept || (field.type === "image" ? "image/*" : undefined)}
-                      required={field.required && !values[field.id]}
+                      required={field.required && !hasValue(field.id)}
                       disabled={uploading[field.id]}
                       onChange={(e) => handleFileChange(field.id, e.target.files?.[0] || null)}
                       className="block w-full text-sm text-foreground file:mr-3 file:py-2 file:px-3 file:rounded-md file:border-0 file:bg-surface-2 file:text-foreground file:font-medium file:cursor-pointer hover:file:bg-surface-2/80 disabled:opacity-50"
@@ -621,7 +659,7 @@ export default function PublicForm() {
                       type="text"
                       placeholder={field.placeholder || "Start typing — Fenway, Prudential…"}
                       required={field.required}
-                      value={values[field.id] || ""}
+                      value={textValue(field.id)}
                       autoComplete="off"
                       onChange={(e) => handleVenueSearch(field.id, e.target.value)}
                     />
@@ -648,7 +686,7 @@ export default function PublicForm() {
                   // is picked.
                   (() => {
                     const options = venueAssets[field.id] || [];
-                    const selected: string[] = values[field.id] || [];
+                    const selected = arrayValue(field.id);
                     if (options.length === 0) {
                       return (
                         <div className="text-xs text-muted italic px-3 py-2 bg-surface-2 rounded-md">
@@ -703,7 +741,7 @@ export default function PublicForm() {
                     type="email"
                     placeholder={field.placeholder}
                     required={field.required}
-                    value={values[field.id] || ""}
+                    value={textValue(field.id)}
                     onChange={(e) => setValue(field.id, e.target.value)}
                     onBlur={(e) => handleEmailAutoFill(field, e.target.value)}
                   />
@@ -712,23 +750,24 @@ export default function PublicForm() {
                     type={field.type}
                     placeholder={field.placeholder}
                     required={field.required}
-                    value={values[field.id] || ""}
+                    value={textValue(field.id)}
                     onChange={(e) => setValue(field.id, e.target.value)}
                   />
                 )}
                 {autoFillNote[field.id] && (
                   <p className="text-xs text-emerald-500 mt-1">✨ {autoFillNote[field.id]}</p>
                 )}
-              </div>
-            ))}
+                </div>
+              ))}
 
-            <button
-              type="submit"
-              disabled={submitting}
-              className="w-full bg-accent text-white py-3 rounded-xl font-medium hover:bg-accent-hover disabled:opacity-50 transition-colors text-sm mt-2"
-            >
-              {submitting ? "Submitting..." : "Submit"}
-            </button>
+              <button
+                type="submit"
+                disabled={previewMode || submitting}
+                className="w-full bg-accent text-white py-3 rounded-xl font-medium hover:bg-accent-hover disabled:opacity-50 transition-colors text-sm mt-2"
+              >
+                {previewMode ? "Preview only" : submitting ? "Submitting..." : "Submit"}
+              </button>
+            </fieldset>
           </form>
         </div>
         <p className="text-center text-xs text-muted/50 mt-4">Powered by ANC</p>
